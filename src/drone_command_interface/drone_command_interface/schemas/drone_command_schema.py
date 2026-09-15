@@ -296,26 +296,23 @@ DRONE_COMMAND_SCHEMA: dict[str, Any] = {
         "commands",
         "message",
     ],
-    # status 값에 따라 commands와 message에 서로 다른 조건을 적용한다.
-    #
-    # accepted:
-    #   - 실행 명령이 최소 1개 필요하다.
-    #   - 오류 메시지가 없어야 하므로 message는 null이다.
-    #
-    # 나머지 상태:
-    #   - 실행 가능한 명령이 없어야 한다.
-    #   - 사용자에게 이유를 알려주는 message가 필요하다.
+    # 여러 필드 사이의 관계처럼 properties만으로 표현할 수 없는
+    # 추가 검증 규칙을 모두 적용한다.
     "allOf": [
         {
+            # ====================================================
+            # status에 따른 commands와 message 검증
+            # ====================================================
             "if": {
-                # status가 accepted인지 검사한다.
+                # status가 accepted인지 확인한다.
                 "properties": {
                     "status": {"const": "accepted"},
                 },
                 "required": ["status"],
             },
             "then": {
-                # accepted일 때 적용되는 조건이다.
+                # 정상 명령에는 실행할 명령이 하나 이상 있어야 하며
+                # 오류나 재질문 메시지가 없어야 한다.
                 "properties": {
                     "commands": {
                         "minItems": 1,
@@ -326,7 +323,8 @@ DRONE_COMMAND_SCHEMA: dict[str, Any] = {
                 },
             },
             "else": {
-                # clarification_required, unsupported, invalid에 적용된다.
+                # clarification_required, unsupported, invalid 상태에서는
+                # 실행 명령이 없어야 하고 사용자 안내 메시지가 필요하다.
                 "properties": {
                     "commands": {
                         "maxItems": 0,
@@ -334,6 +332,41 @@ DRONE_COMMAND_SCHEMA: dict[str, Any] = {
                     "message": {
                         "type": "string",
                         "minLength": 1,
+                    },
+                },
+            },
+        },
+        {
+            # ====================================================
+            # cancel과 emergency_stop의 단독 출력 검증
+            # ====================================================
+            "if": {
+                "properties": {
+                    "commands": {
+                        # contains는 배열 안에 아래 조건을 만족하는 항목이
+                        # 하나 이상 있는지 검사한다.
+                        "contains": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "enum": [
+                                        "cancel",
+                                        "emergency_stop",
+                                    ],
+                                },
+                            },
+                            "required": ["name"],
+                        },
+                    },
+                },
+                "required": ["commands"],
+            },
+            "then": {
+                "properties": {
+                    # cancel 또는 emergency_stop이 발견되면 commands 배열에는
+                    # 해당 명령 하나만 존재해야 한다.
+                    "commands": {
+                        "maxItems": 1,
                     },
                 },
             },

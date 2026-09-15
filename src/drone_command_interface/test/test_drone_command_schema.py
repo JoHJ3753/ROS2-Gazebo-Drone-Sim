@@ -478,3 +478,78 @@ def test_valid_composite_command():
 
     # 세 명령이 모두 유효하므로 전체 결과도 통과해야 한다.
     validate(result)
+
+
+# ============================================================
+# 취소 및 비상 정지 단독 명령 검사
+# ============================================================
+
+
+@pytest.mark.parametrize(
+    "exclusive_command",
+    [
+        "cancel",
+        "emergency_stop",
+    ],
+)
+def test_exclusive_command_is_valid_when_used_alone(exclusive_command):
+    """
+    cancel과 emergency_stop이 단독으로 사용되면 허용되는지 확인한다.
+
+    두 명령은 다른 명령과 함께 사용할 수 없지만,
+    각각 하나만 출력되는 경우에는 정상적인 명령이다.
+    """
+    result = {
+        "status": "accepted",
+        "commands": [
+            {
+                "name": exclusive_command,
+                "arguments": {},
+            },
+        ],
+        "message": None,
+    }
+
+    # 단독 명령이므로 스키마 검증을 통과해야 한다.
+    validate(result)
+
+
+@pytest.mark.parametrize(
+    "exclusive_command",
+    [
+        "cancel",
+        "emergency_stop",
+    ],
+)
+def test_exclusive_command_rejects_other_commands(exclusive_command):
+    """
+    cancel 또는 emergency_stop이 다른 명령과 함께 있으면 거부하는지 확인한다.
+
+    전용 명령이 배열의 앞이나 뒤에 있어도 동일하게 거부되어야 하므로
+    두 가지 순서를 모두 검사한다.
+    """
+    exclusive = {
+        "name": exclusive_command,
+        "arguments": {},
+    }
+    land = {
+        "name": "land",
+        "arguments": {},
+    }
+
+    # 전용 명령이 먼저 나오는 경우와 나중에 나오는 경우를 모두 검사한다.
+    command_orders = [
+        [exclusive, land],
+        [land, exclusive],
+    ]
+
+    for commands in command_orders:
+        result = {
+            "status": "accepted",
+            "commands": commands,
+            "message": None,
+        }
+
+        # 다른 명령과 함께 있으므로 ValidationError가 발생해야 한다.
+        with pytest.raises(ValidationError):
+            validate(result)
