@@ -25,7 +25,7 @@ def _command(
 
     Args:
         name:
-            명령 이름. 예: takeoff, land, move_relative
+            명령 이름. 예: takeoff, land, move_drone
 
         properties:
             명령이 받을 수 있는 인자들의 스키마.
@@ -93,29 +93,34 @@ TAKEOFF_COMMAND = _command(
 
 LAND_COMMAND = _command("land")
 
-# 현재 기수를 기준으로 상대 이동하는 명령이다.
+# 자연어에서 추출한 이동 방향과 거리를 표현하는 LLM용 명령이다.
 #
 # 예:
-#   forward_m=2.0  → 전방으로 2m
-#   right_m=-1.0   → 왼쪽으로 1m
-#   up_m=0.5       → 위로 0.5m
+#   direction="forward", distance_m=2.0 → 앞으로 2m
+#   direction="left", distance_m=1.0    → 왼쪽으로 1m
+#   direction="up", distance_m=0.5      → 위로 0.5m
 #
-# 이 값은 절대좌표가 아니며 실제 NED 좌표 계산은
-# CoordinateCalculator가 담당한다.
-MOVE_RELATIVE_COMMAND = _command(
-    "move_relative",
+# LLM은 방향을 좌표축이나 양수·음수로 변환하지 않는다.
+# 실제 forward_m, right_m, up_m 변환은 CoordinateCalculator가 담당한다.
+MOVE_DRONE_COMMAND = _command(
+    "move_drone",
     properties={
-        "forward_m": {
-            "type": "number",
-            "description": "현재 기수 기준 전후 이동 거리(m). 전진은 양수, 후진은 음수",
+        "direction": {
+            "type": "string",
+            "enum": [
+                "forward",
+                "backward",
+                "left",
+                "right",
+                "up",
+                "down",
+            ],
+            "description": "드론이 이동할 상대 방향",
         },
-        "right_m": {
+        "distance_m": {
             "type": "number",
-            "description": "현재 기수 기준 좌우 이동 거리(m). 오른쪽은 양수, 왼쪽은 음수",
-        },
-        "up_m": {
-            "type": "number",
-            "description": "현재 위치 기준 수직 이동 거리(m). 상승은 양수, 하강은 음수",
+            "exclusiveMinimum": 0,
+            "description": "이동할 거리(m)",
         },
         "speed_mps": {
             "type": "number",
@@ -124,9 +129,8 @@ MOVE_RELATIVE_COMMAND = _command(
         },
     },
     required=[
-        "forward_m",
-        "right_m",
-        "up_m",
+        "direction",
+        "distance_m",
     ],
 )
 
@@ -266,7 +270,7 @@ DRONE_COMMAND_SCHEMA: dict[str, Any] = {
                     DISARM_COMMAND,
                     TAKEOFF_COMMAND,
                     LAND_COMMAND,
-                    MOVE_RELATIVE_COMMAND,
+                    MOVE_DRONE_COMMAND,
                     MOVE_CLOCK_DIRECTION_COMMAND,
                     ROTATE_RELATIVE_COMMAND,
                     HOVER_COMMAND,
