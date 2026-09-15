@@ -245,7 +245,8 @@ EMERGENCY_STOP_COMMAND = _command("emergency_stop")
 # ============================================================
 
 DRONE_COMMAND_SCHEMA: dict[str, Any] = {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    # ROS 2 Humble의 기본 jsonschema 3.2.0과 호환되는 Draft 7을 사용한다.
+    "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "DroneCommandResult",
     "description": "자연어 드론 명령을 해석한 결과",
     "type": "object",
