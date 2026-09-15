@@ -1,0 +1,31 @@
+# ROS 2 / colcon
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments and secrets
+.venv/
+venv/
+.env
+.env.*
+
+# Models and training outputs
+*.pt
+*.pth
+*.ckpt
+*.onnx
+runs/
+outputs/
+checkpoints/
+
+# Editors and operating system
+.vscode/
+.idea/
+.DS_Store
