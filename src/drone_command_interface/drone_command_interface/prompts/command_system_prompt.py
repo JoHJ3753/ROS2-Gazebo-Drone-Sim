@@ -1,7 +1,22 @@
-"""Qwen 드론 명령 해석용 시스템 프롬프트."""
+"""
+Qwen 모델에 전달할 드론 명령 해석용 시스템 프롬프트를 생성한다.
+
+이 모듈은 두 가지 내용을 결합한다.
+
+1. _SYSTEM_PROMPT_TEXT
+   자연어 드론 명령을 어떻게 해석해야 하는지 모델에 알려주는 규칙
+
+2. DRONE_COMMAND_SCHEMA
+   모델이 출력해야 하는 JSON 객체의 정확한 구조
+
+완성된 SYSTEM_PROMPT는 추후 Qwen 모델을 호출하는 코드에서 사용한다.
+이 모듈은 드론을 직접 제어하거나 명령을 실행하지 않는다.
+"""
 
 import json
 
+# 출력 형식을 프롬프트 파일에서 중복 정의하지 않고 스키마 모듈에서 가져온다.
+# 따라서 명령 스키마가 변경되면 최종 SYSTEM_PROMPT에도 자동으로 반영된다.
 from drone_command_interface.schemas.drone_command_schema import (
     DRONE_COMMAND_SCHEMA,
 )
@@ -11,6 +26,20 @@ from drone_command_interface.schemas.drone_command_schema import (
 # Qwen2.5-3B-Instruct 시스템 프롬프트
 # ============================================================
 
+# Qwen 모델이 사용자 명령을 해석할 때 따라야 할 규칙이다.
+#
+# 이 문자열에서는 다음 내용을 설명한다.
+#
+# - 모델의 역할
+# - 거리, 속도 및 각도의 단위
+# - 각 방향의 양수와 음수 기준
+# - 지원하는 드론 명령
+# - 복합 명령 처리 방법
+# - 모호하거나 지원하지 않는 명령의 처리 방법
+# - 비상 정지 우선순위
+# - 올바른 JSON 출력 예시
+#
+# 실제 JSON Schema는 이 문자열 마지막에 별도로 추가된다.
 _SYSTEM_PROMPT_TEXT = """
 당신은 한국어 자연어 드론 명령을 구조화된 JSON으로 변환하는
 드론 명령 해석기입니다.
@@ -495,6 +524,21 @@ clarification_required를 반환하세요.
 """.strip()
 
 
+# 기본 지시문과 JSON Schema를 합쳐 모델에 전달할 최종 프롬프트를 만든다.
+#
+# json.dumps():
+#   Python 딕셔너리인 DRONE_COMMAND_SCHEMA를 JSON 문자열로 변환한다.
+#
+# ensure_ascii=False:
+#   한글을 "\\uXXXX" 형식으로 변환하지 않고 읽을 수 있는 상태로 유지한다.
+#
+# indent=2:
+#   JSON을 두 칸 단위로 들여쓰기하여 모델과 개발자가 읽기 쉽게 만든다.
+#
+# 결과 구조:
+#   시스템 지시문
+#   + 빈 줄
+#   + 실제 JSON Schema
 SYSTEM_PROMPT = (
     _SYSTEM_PROMPT_TEXT
     + "\n\n"
