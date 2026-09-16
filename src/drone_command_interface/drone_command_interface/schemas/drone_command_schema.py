@@ -215,25 +215,18 @@ TAKE_PHOTO_COMMAND = _command(
     required=["count"],
 )
 
+# 저장된 홈 좌표로 직접 복귀하는 명령이다.
+#
+# 지나온 경로를 역추적하지 않고 Control Layer가 저장된 홈 좌표를
+# 목적지로 사용해 직접 복귀한다.
 RETURN_HOME_COMMAND = _command("return_home")
 
-RECALL_POSITION_COMMAND = _command(
-    "recall_position",
-    properties={
-        "target": {
-            "type": "string",
-            "enum": [
-                "previous",
-                "first",
-            ],
-            "description": (
-                "previous는 직전 명령 위치, "
-                "first는 첫 번째 명령 수행 위치"
-            ),
-        },
-    },
-    required=["target"],
-)
+
+# 성공적으로 실행된 Action History를 역순으로 따라 복귀하는 명령이다.
+#
+# LLM은 역방향 명령이나 복귀 좌표를 직접 생성하지 않는다.
+# 실제 역방향 명령 생성과 실행은 Reverse Executor와 Mission FSM이 담당한다.
+RECALL_COMMAND = _command("recall")
 
 CANCEL_COMMAND = _command("cancel")
 
@@ -277,7 +270,7 @@ DRONE_COMMAND_SCHEMA: dict[str, Any] = {
                     HOVER_COMMAND,
                     TAKE_PHOTO_COMMAND,
                     RETURN_HOME_COMMAND,
-                    RECALL_POSITION_COMMAND,
+                    RECALL_COMMAND,
                     CANCEL_COMMAND,
                     EMERGENCY_STOP_COMMAND,
                 ],

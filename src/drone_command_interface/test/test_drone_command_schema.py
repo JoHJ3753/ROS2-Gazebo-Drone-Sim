@@ -550,6 +550,102 @@ def test_exclusive_command_rejects_other_commands(exclusive_command):
             "message": None,
         }
 
-        # 다른 명령과 함께 있으므로 ValidationError가 발생해야 한다.
+        # cancel 또는 emergency_stop이 다른 명령과 함께 있으므로
+        # ValidationError가 발생해야 테스트가 성공한다.
         with pytest.raises(ValidationError):
             validate(result)
+
+
+# ============================================================
+# 홈 복귀 및 경로 역추적 명령 검사
+# ============================================================
+
+
+def test_valid_return_home_command():
+    """
+    홈 좌표로 직접 복귀하는 return_home 명령을 허용하는지 확인한다.
+
+    return_home의 실제 좌표 계산과 이동은 Control Layer가 담당하므로
+    LLM 출력에는 별도의 인자가 필요하지 않다.
+    """
+    result = {
+        "status": "accepted",
+        "commands": [
+            {
+                "name": "return_home",
+                "arguments": {},
+            },
+        ],
+        "message": None,
+    }
+
+    validate(result)
+
+
+def test_valid_recall_command():
+    """
+    Action History를 역추적하는 recall 단독 명령을 허용하는지 확인한다.
+
+    역방향 이동 목록은 Reverse Executor가 생성하므로
+    recall 명령 자체에는 별도의 인자가 필요하지 않다.
+    """
+    result = {
+        "status": "accepted",
+        "commands": [
+            {
+                "name": "recall",
+                "arguments": {},
+            },
+        ],
+        "message": None,
+    }
+
+    validate(result)
+
+
+def test_valid_recall_then_land_command():
+    """
+    경로를 역추적한 다음 착륙하는 복합 명령을 허용하는지 확인한다.
+
+    commands 배열의 순서는 실제 실행 순서를 의미하므로
+    recall이 land보다 먼저 위치해야 한다.
+    """
+    result = {
+        "status": "accepted",
+        "commands": [
+            {
+                "name": "recall",
+                "arguments": {},
+            },
+            {
+                "name": "land",
+                "arguments": {},
+            },
+        ],
+        "message": None,
+    }
+
+    validate(result)
+
+
+def test_old_recall_position_command_is_rejected():
+    """
+    더 이상 사용하지 않는 recall_position 명령을 거부하는지 확인한다.
+
+    이전 명령 이름이 실수로 다시 사용되는 것을 방지하는 회귀 테스트다.
+    """
+    result = {
+        "status": "accepted",
+        "commands": [
+            {
+                "name": "recall_position",
+                "arguments": {
+                    "target": "previous",
+                },
+            },
+        ],
+        "message": None,
+    }
+
+    with pytest.raises(ValidationError):
+        validate(result)
