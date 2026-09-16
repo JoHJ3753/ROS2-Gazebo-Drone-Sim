@@ -1,19 +1,25 @@
 import time
 import rclpy
 from rclpy.node import Node
- 
+
 from llama_cpp import Llama
- 
+
 from llm_ros2.srv import AskLLM
- 
- 
+
+
 class LLMService(Node):
- 
+
     def __init__(self):
         super().__init__("llm_service")
- 
+
         # yaml(파라미터 서버)에서 값 읽기. 기본값은 qwen.yaml에 없을 때만 사용됨.
-        self.declare_parameter("model_path", "/home/hkit/ROS2-Gazebo-Drone-Sim/Qwen2.5-3B-Instruct-Q4_K_M.gguf")
+        self.declare_parameter(
+            "model_path",
+            (
+                "/home/hkit/ROS2-Gazebo-Drone-Sim/"
+                "Qwen2.5-3B-Instruct-Q4_K_M.gguf"
+            ),
+        )
         self.declare_parameter("context_size", 2048)
         self.declare_parameter("threads", 4)
         self.declare_parameter("max_tokens", 512)
@@ -30,49 +36,48 @@ class LLMService(Node):
             "6. 모르는 내용은 추측하지 않고 모른다고 답한다.\n"
             "7. 답변은 이해하기 쉽고 명확하게 작성한다."
         ))
- 
+
         model_path = self.get_parameter("model_path").value
         context_size = self.get_parameter("context_size").value
         threads = self.get_parameter("threads").value
- 
+
         self.get_logger().info("모델 로딩 중...")
- 
+
         self.llm = Llama(
             model_path=model_path,
             n_ctx=context_size,
             n_threads=threads,
             verbose=False
         )
- 
+
         self.get_logger().info("모델 로딩 완료!")
- 
+
         self.service = self.create_service(
             AskLLM,
             "ask_llm",
             self.handle_request
         )
- 
+
         self.get_logger().info(
             "LLM Service 준비 완료: /ask_llm"
         )
- 
- 
+
     def handle_request(self, request, response):
- 
+
         question = request.question
- 
+
         self.get_logger().info(
             f"질문 수신: {question}"
         )
- 
+
         self.get_logger().info(
             "입력 데이터 처리 중..."
         )
- 
+
         system_prompt = self.get_parameter("system_prompt").value
         max_tokens = self.get_parameter("max_tokens").value
         temperature = self.get_parameter("temperature").value
- 
+
         messages = [
             {
                 "role": "system",
@@ -83,50 +88,50 @@ class LLMService(Node):
                 "content": question
             }
         ]
- 
+
         self.get_logger().info(
             "LLM 응답 생성 중... 잠시만 기다려주세요."
         )
- 
+
         start_time = time.time()
- 
+
         output = self.llm.create_chat_completion(
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature
         )
- 
+
         elapsed_time = time.time() - start_time
- 
+
         self.get_logger().info(
             f"LLM 응답 생성 완료! ({elapsed_time:.2f}초)"
         )
- 
+
         answer = output["choices"][0]["message"]["content"]
- 
+
         response.response = answer
- 
+
         self.get_logger().info(
             f"응답: {answer}"
         )
- 
+
         return response
- 
- 
+
+
 def main(args=None):
- 
+
     rclpy.init(args=args)
- 
+
     node = LLMService()
- 
+
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
- 
+
     node.destroy_node()
     rclpy.shutdown()
- 
- 
+
+
 if __name__ == "__main__":
     main()
