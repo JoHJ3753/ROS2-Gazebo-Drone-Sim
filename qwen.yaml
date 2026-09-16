@@ -1,7 +1,0 @@
-qwen_service:
-  ros__parameters:
-    model_path: "/home/hkit/ROS2-Gazebo-Drone-Sim/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
-    context_size: 2048
-    threads: 4
-    max_tokens: 256
-    timeout_seconds: 120

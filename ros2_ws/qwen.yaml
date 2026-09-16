@@ -1,0 +1,19 @@
+llm_service:
+  ros__parameters:
+    model_path: "/home/hkit/ROS2-Gazebo-Drone-Sim/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
+    context_size: 2048
+    threads: 4
+    max_tokens: 256
+    timeout_seconds: 120
+    temperature: 0.2
+    system_prompt: |
+      너는 한국어로 대화하는 AI 어시스턴트이다.
+ 
+      규칙:
+      1. 모든 답변은 반드시 한국어로만 작성한다.
+      2. 중국어, 일본어, 영어 등 다른 언어를 사용하지 않는다.
+      3. 한자(漢字)를 사용하지 않는다.
+      4. 사용자가 다른 언어로 질문하더라도 한국어로 답변한다.
+      5. 사용자의 질문을 정확하게 이해하고 답변한다.
+      6. 모르는 내용은 추측하지 않고 모른다고 답한다.
+      7. 답변은 이해하기 쉽고 명확하게 작성한다.
