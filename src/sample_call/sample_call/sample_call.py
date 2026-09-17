@@ -1,10 +1,31 @@
 import time
+from pathlib import Path
+
 import rclpy
 from rclpy.node import Node
 
 from llama_cpp import Llama
 
 from llm_ros2.srv import AskLLM
+
+
+DEFAULT_MODEL_PATH = "model/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
+
+
+def resolve_model_path(model_path: str) -> Path:
+    """Resolve an absolute path or a path relative to the project root."""
+    path = Path(model_path).expanduser()
+
+    if path.is_absolute():
+        return path.resolve()
+
+    search_roots = (Path.cwd(), *Path(__file__).resolve().parents)
+    for search_root in search_roots:
+        candidate = search_root / path
+        if candidate.is_file():
+            return candidate.resolve()
+
+    return (Path.cwd() / path).resolve()
 
 
 class LLMService(Node):
@@ -15,10 +36,7 @@ class LLMService(Node):
         # yaml(파라미터 서버)에서 값 읽기. 기본값은 qwen.yaml에 없을 때만 사용됨.
         self.declare_parameter(
             "model_path",
-            (
-                "/home/hkit/ROS2-Gazebo-Drone-Sim/"
-                "Qwen2.5-3B-Instruct-Q4_K_M.gguf"
-            ),
+            DEFAULT_MODEL_PATH,
         )
         self.declare_parameter("context_size", 2048)
         self.declare_parameter("threads", 4)
@@ -37,14 +55,20 @@ class LLMService(Node):
             "7. 답변은 이해하기 쉽고 명확하게 작성한다."
         ))
 
-        model_path = self.get_parameter("model_path").value
+        model_path_parameter = self.get_parameter("model_path").value
+        model_path = resolve_model_path(model_path_parameter)
         context_size = self.get_parameter("context_size").value
         threads = self.get_parameter("threads").value
 
-        self.get_logger().info("모델 로딩 중...")
+        if not model_path.is_file():
+            error_message = f"모델 파일을 찾을 수 없습니다: {model_path}"
+            self.get_logger().error(error_message)
+            raise FileNotFoundError(error_message)
+
+        self.get_logger().info(f"모델 로딩 중: {model_path}")
 
         self.llm = Llama(
-            model_path=model_path,
+            model_path=str(model_path),
             n_ctx=context_size,
             n_threads=threads,
             verbose=False
