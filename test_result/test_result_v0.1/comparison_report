@@ -1,0 +1,363 @@
+========================================================================
+Qwen2.5 드론 명령 파인튜닝 전후 비교 보고서
+========================================================================
+
+실험 ID: 2026-09-17_142025
+Git Commit: d837175138d2d04ce908ffdd1b639f0e34e3a424
+Base Model: /home/work/models/qwen2.5-3b-instruct
+Dataset: dataset_v0.1
+Train / Validation / Test: 200 / 20 / 20
+GPU: NVIDIA A100-SXM4-80GB
+
+[전체 성능]
+평가 항목                          파인튜닝 전         파인튜닝 후
+JSON 파싱 성공률                    85.00%        100.00%
+Schema 검증 통과율                  75.00%         90.00%
+Status 정확도                     50.00%         85.00%
+명령 이름·순서 정확도                   45.00%         75.00%
+파라미터 정확도                       35.00%         70.00%
+전체 완전 일치 정확도                   15.00%         45.00%
+한자 미포함 비율                     100.00%        100.00%
+
+[유형별 완전 일치 정확도]
+ambiguous_or_impossible 샘플   9개 | 전   0.00% | 후  22.22%
+basic_single            샘플   1개 | 전   0.00% | 후   0.00%
+compound                샘플   5개 | 전  40.00% | 후  80.00%
+numeric                 샘플   2개 | 전   0.00% | 후 100.00%
+relative_position       샘플   2개 | 전  50.00% | 후  50.00%
+vision_language         샘플   1개 | 전   0.00% | 후   0.00%
+
+[대표 개선 사례]
+
+사례 1
+분류: numeric
+입력: 시계 방향으로 초당 15도 속도로 75도 돌아
+예상:
+{"status": "accepted", "commands": [{"name": "rotate_relative", "arguments": {"yaw_deg": 75, "yaw_speed_dps": 15}}], "message": null}
+파인튜닝 전:
+{
+  "status": "accepted",
+  "commands": [
+    {
+      "name": "rotate_relative",
+      "arguments": {
+        "yaw_deg": 75.0
+      }
+    }
+  ],
+  "message": null
+}
+파인튜닝 후:
+{"status": "accepted", "commands": [{"name": "rotate_relative", "arguments": {"yaw_deg": 75, "yaw_speed_dps": 15}}], "message": null}
+
+사례 2
+분류: compound
+입력: 사진 두 장을 1.5초 간격으로 찍고 착륙해
+예상:
+{"status": "accepted", "commands": [{"name": "take_photo", "arguments": {"count": 2, "interval_s": 1.5}}, {"name": "land", "arguments": {}}], "message": null}
+파인튜닝 전:
+{
+  "status": "accepted",
+  "commands": [
+    {
+      "name": "take_photo",
+      "arguments": {
+        "count": 2
+      }
+    },
+    {
+      "name": "move_drone",
+      "arguments": {
+        "direction": "down",
+        "distance_m": 0.5
+      }
+    },
+    {
+      "name": "hover",
+      "arguments": {
+        "duration_s": 1.5
+      }
+    },
+    {
+      "name": "land",
+      "arguments": {}
+    }
+  ],
+  "message": null
+}
+파인튜닝 후:
+{"status": "accepted", "commands": [{"name": "take_photo", "arguments": {"count": 2, "interval_s": 1.5}}, {"name": "land", "arguments": {}}], "message": null}
+
+사례 3
+분류: compound
+입력: 사진 찍고 이동 경로를 거꾸로 따라 복귀해
+예상:
+{"status": "accepted", "commands": [{"name": "take_photo", "arguments": {"count": 1}}, {"name": "recall", "arguments": {}}], "message": null}
+파인튜닝 전:
+{
+  "status": "clarification_required",
+  "commands": [],
+  "message": "복귀 경로를 역순으로 따라 사진을 찍을 거리와 시간을 명시해 주세요."
+}
+파인튜닝 후:
+{"status": "accepted", "commands": [{"name": "take_photo", "arguments": {"count": 1}}, {"name": "recall", "arguments": {}}], "message": null}
+
+사례 4
+분류: numeric
+입력: 초속 1.4미터로 위로 2.2미터 상승해
+예상:
+{"status": "accepted", "commands": [{"name": "move_drone", "arguments": {"direction": "up", "distance_m": 2.2, "speed_mps": 1.4}}], "message": null}
+파인튜닝 전:
+{
+  "status": "accepted",
+  "commands": [
+    {
+      "name": "move_drone",
+      "arguments": {
+        "direction": "up",
+        "distance_m": 2.2,
+        "speed_mps": 1.4 / 3.6
+      }
+    }
+  ],
+  "message": null
+}
+파인튜닝 후:
+{"status": "accepted", "commands": [{"name": "move_drone", "arguments": {"direction": "up", "distance_m": 2.2, "speed_mps": 1.4}}], "message": null}
+
+사례 5
+분류: ambiguous_or_impossible
+입력: 지금 기분이 어때?
+예상:
+{"status": "invalid", "commands": [], "message": "드론 명령으로 이해할 수 없습니다."}
+파인튜닝 전:
+{
+  "status": "invalid",
+  "commands": [],
+  "message": "명령을 이해할 수 없습니다."
+}
+파인튜닝 후:
+{"status": "invalid", "commands": [], "message": "드론 명령으로 이해할 수 없습니다."}
+
+사례 6
+분류: ambiguous_or_impossible
+입력: 수학 과제 좀 도와줘
+예상:
+{"status": "invalid", "commands": [], "message": "드론 명령으로 이해할 수 없습니다."}
+파인튜닝 전:
+드론 명령을 처리하는 데 도움이 될 수 있는 정보를 주셨군요. 하지만 현재 질문은 드론 명령 관련 문제가 아니라 수학 과제 도와드리기 위한 것 같습니다. 수학 과제에 대해 좀 더 구체적으로 설명해주시면 감사하겠습니다.
+파인튜닝 후:
+{"status": "invalid", "commands": [], "message": "드론 명령으로 이해할 수 없습니다."}
+
+[학습 후 남은 실패 사례]
+
+사례 1
+분류: relative_position
+입력: 기수를 고정한 채 5시 방향으로 0.6미터 이동해
+예상:
+{"status": "accepted", "commands": [{"name": "move_clock_direction", "arguments": {"clock_hour": 5, "distance_m": 0.6, "face_direction": false}}], "message": null}
+파인튜닝 전:
+{
+  "status": "accepted",
+  "commands": [
+    {
+      "name": "move_clock_direction",
+      "arguments": {
+        "clock_hour": 5,
+        "distance_m": 0.6,
+        "face_direction": true
+      }
+    }
+  ],
+  "message": null
+}
+파인튜닝 후:
+{"status": "accepted", "commands": [{"name": "move_clock_direction", "arguments": {"clock_hour": 5, "distance_m": 0.6, "face_direction": true}}], "message": null}
+
+사례 2
+분류: basic_single
+입력: 비상 정지하고 사진 찍어
+예상:
+{"status": "accepted", "commands": [{"name": "emergency_stop", "arguments": {}}], "message": null}
+파인튜닝 전:
+{
+  "status": "accepted",
+  "commands": [
+    {
+      "name": "emergency_stop",
+      "arguments": {}
+    },
+    {
+      "name": "take_photo",
+      "arguments": {
+        "count": 1
+      }
+    }
+  ],
+  "message": null
+}
+파인튜닝 후:
+{"status": "accepted", "commands": [{"name": "emergency_stop", "arguments": {}}, {"name": "take_photo", "arguments": {"count": 1}}], "message": null}
+
+사례 3
+분류: compound
+입력: 정면으로 0.45미터 이동 후 기수를 왼쪽으로 35도 틀어
+예상:
+{"status": "accepted", "commands": [{"name": "move_drone", "arguments": {"direction": "forward", "distance_m": 0.45}}, {"name": "rotate_relative", "arguments": {"yaw_deg": -35}}], "message": null}
+파인튜닝 전:
+{
+  "status": "accepted",
+  "commands": [
+    {
+      "name": "move_clock_direction",
+      "arguments": {
+        "clock_hour": 12,
+        "distance_m": 0.45,
+        "face_direction": false
+      }
+    },
+    {
+      "name": "rotate_relative",
+      "arguments": {
+        "yaw_deg": -35.0
+      }
+    }
+  ],
+  "message": null
+}
+파인튜닝 후:
+{"status": "accepted", "commands": [{"name": "move_clock_direction", "arguments": {"clock_hour": 12, "distance_m": 0.45, "face_direction": false}}, {"name": "rotate_relative", "arguments": {"yaw_deg": -35}}], "message": null}
+
+사례 4
+분류: ambiguous_or_impossible
+입력: 사진 두 장 찍고 뒤로 물러나
+예상:
+{"status": "clarification_required", "commands": [], "message": "사진 촬영 후 뒤로 몇 미터 이동할지 알려주세요."}
+파인튜닝 전:
+{
+  "status": "accepted",
+  "commands": [
+    {
+      "name": "take_photo",
+      "arguments": {
+        "count": 2
+      }
+    },
+    {
+      "name": "move_drone",
+      "arguments": {
+        "direction": "backward",
+        "distance_m": 0.5
+      }
+    }
+  ],
+  "message": null
+}
+파인튜닝 후:
+{"status": "accepted", "commands": [{"name": "take_photo", "arguments": {"count": 2}}, {"name": "move_drone", "arguments": {"direction": "backward", "distance_m": 2}}], "message": null}
+
+사례 5
+분류: ambiguous_or_impossible
+입력: 12시 방향으로 이동해
+예상:
+{"status": "clarification_required", "commands": [], "message": "12시 방향으로 몇 미터 이동할지 알려주세요."}
+파인튜닝 전:
+{
+  "status": "accepted",
+  "commands": [
+    {
+      "name": "move_clock_direction",
+      "arguments": {
+        "clock_hour": 12,
+        "distance_m": 0.0,
+        "face_direction": false
+      }
+    }
+  ],
+  "message": null
+}
+파인튜닝 후:
+{"status": "accepted", "commands": [{"name": "move_clock_direction", "arguments": {"clock_hour": 12, "distance_m": 0, "face_direction": false}}], "message": null}
+
+사례 6
+분류: ambiguous_or_impossible
+입력: 기수를 반시계 방향으로 돌려
+예상:
+{"status": "clarification_required", "commands": [], "message": "왼쪽으로 몇 도 회전할지 알려주세요."}
+파인튜닝 전:
+{
+  "status": "clarification_required",
+  "commands": [],
+  "message": "반시계 방향으로 돌릴 회전 각도(degree)를 입력해 주세요."
+}
+파인튜닝 후:
+{"status": "clarification_required", "commands": [], "message": "반시계 방향으로 얼마나 회전할까요?"}
+
+사례 7
+분류: ambiguous_or_impossible
+입력: 홈까지 가줘
+예상:
+{"status": "clarification_required", "commands": [], "message": "홈으로 바로 갈지, 왔던 경로를 되짚을지 알려주세요."}
+파인튜닝 전:
+{
+  "status": "accepted",
+  "commands": [
+    {
+      "name": "return_home",
+      "arguments": {}
+    }
+  ],
+  "message": null
+}
+파인튜닝 후:
+{"status": "accepted", "commands": [{"name": "return_home", "arguments": {}}], "message": null}
+
+사례 8
+분류: ambiguous_or_impossible
+입력: 2.4만큼 이동해
+예상:
+{"status": "clarification_required", "commands": [], "message": "이동할 방향과 거리의 단위를 알려주세요."}
+파인튜닝 전:
+{
+  "status": "accepted",
+  "commands": [
+    {
+      "name": "move_drone",
+      "arguments": {
+        "direction": "forward",
+        "distance_m": 2.4
+      }
+    }
+  ],
+  "message": null
+}
+파인튜닝 후:
+{"status": "clarification_required", "commands": [], "message": "이동할 방향과 거리를 알려주세요."}
+
+사례 9
+분류: vision_language
+입력: 사람이 손을 흔들면 착륙해
+예상:
+{"status": "unsupported", "commands": [], "message": "사람의 동작을 인식해 조건부로 착륙하는 명령은 현재 지원하지 않습니다."}
+파인튜닝 전:
+{
+  "status": "clarification_required",
+  "commands": [],
+  "message": "사람이 손을 흔들면 착륙할지, 착륙을 요청한 것인지 구분해 주세요."
+}
+파인튜닝 후:
+{"status": "unsupported", "commands": [], "message": "사람이 손을 흔들면 착륙하는 조건부 명령은 현재 지원하지 않습니다."}
+
+사례 10
+분류: ambiguous_or_impossible
+입력: 비행하면서 원을 그려
+예상:
+{"status": "unsupported", "commands": [], "message": "원을 그리는 비행 명령은 현재 지원하지 않습니다."}
+파인튜닝 전:
+{
+  "status": "clarification_required",
+  "commands": [],
+  "message": "원을 그리는 거리와 반복 횟수를 입력해 주세요."
+}
+파인튜닝 후:
+{"status": "unsupported", "commands": [], "message": "비행하면서 원을 그리는 명령은 현재 지원하지 않습니다."}

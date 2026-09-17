@@ -1,0 +1,107 @@
+명령> 앞으로 1미터 이동해
+2026-09-17 15:51:17,256 | INFO | 사용자 명령: 앞으로 1미터 이동해
+2026-09-17 15:51:20,581 | INFO | LLM 원본 응답: {"status": "accepted", "commands": [{"name": "move_drone", "arguments": {"direction": "forward", "distance_m": 1}}], "message": null}
+2026-09-17 15:51:20,582 | INFO | LLM 출력 검증 성공: status=accepted, commands=['move_drone']
+{
+  "status": "accepted",
+  "commands": [
+    {
+      "name": "move_drone",
+      "arguments": {
+        "direction": "forward",
+        "distance_m": 1
+      }
+    }
+  ],
+  "message": null
+}
+
+명령> 초속 1.4미터로 위로 2.2미터 상승해
+2026-09-17 15:51:31,382 | INFO | 사용자 명령: 초속 1.4미터로 위로 2.2미터 상승해
+2026-09-17 15:51:34,975 | INFO | LLM 원본 응답: {"status": "accepted", "commands": [{"name": "move_drone", "arguments": {"direction": "up", "distance_m": 2.2, "speed_mps": 1.4}}], "message": null}
+2026-09-17 15:51:34,976 | INFO | LLM 출력 검증 성공: status=accepted, commands=['move_drone']
+{
+  "status": "accepted",
+  "commands": [
+    {
+      "name": "move_drone",
+      "arguments": {
+        "direction": "up",
+        "distance_m": 2.2,
+        "speed_mps": 1.4
+      }
+    }
+  ],
+  "message": null
+}
+
+명령> 사진 두 장을 1.5초 간격으로 찍고 착륙해
+2026-09-17 15:51:42,441 | INFO | 사용자 명령: 사진 두 장을 1.5초 간격으로 찍고 착륙해
+2026-09-17 15:51:45,690 | INFO | LLM 원본 응답: {"status": "accepted", "commands": [{"name": "take_photo", "arguments": {"count": 2, "interval_s": 1.5}}, {"name": "land", "arguments": {}}], "message": null}
+2026-09-17 15:51:45,691 | INFO | LLM 출력 검증 성공: status=accepted, commands=['take_photo', 'land']
+{
+  "status": "accepted",
+  "commands": [
+    {
+      "name": "take_photo",
+      "arguments": {
+        "count": 2,
+        "interval_s": 1.5
+      }
+    },
+    {
+      "name": "land",
+      "arguments": {}
+    }
+  ],
+  "message": null
+}
+
+명령> 기수를 고정한 채 5시 방향으로 0.6미터 이동해
+2026-09-17 15:51:53,994 | INFO | 사용자 명령: 기수를 고정한 채 5시 방향으로 0.6미터 이동해
+2026-09-17 15:51:57,288 | INFO | LLM 원본 응답: {"status": "accepted", "commands": [{"name": "move_clock_direction", "arguments": {"clock_hour": 5, "distance_m": 0.6, "face_direction": true}}], "message": null}
+2026-09-17 15:51:57,289 | INFO | LLM 출력 검증 성공: status=accepted, commands=['move_clock_direction']
+{
+  "status": "accepted",
+  "commands": [
+    {
+      "name": "move_clock_direction",
+      "arguments": {
+        "clock_hour": 5,
+        "distance_m": 0.6,
+        "face_direction": true
+      }
+    }
+  ],
+  "message": null
+}
+
+명령> 12시 방향으로 이동해
+2026-09-17 15:52:08,289 | INFO | 사용자 명령: 12시 방향으로 이동해
+2026-09-17 15:52:11,344 | INFO | LLM 원본 응답: {"status": "accepted", "commands": [{"name": "move_clock_direction", "arguments": {"clock_hour": 12, "distance_m": 0, "face_direction": false}}], "message": null}
+2026-09-17 15:52:11,344 | ERROR | LLM 출력 검증 실패: LoRA inference output was rejected: Model output does not match the schema: commands.0: {'name': 'move_clock_direction', 'arguments': {'clock_hour': 12, 'distance_m': 0, 'face_direction': False}} is not valid under any of the given schemas
+
+명령> 비상 정지하고 사진 찍어
+2026-09-17 15:52:22,149 | INFO | 사용자 명령: 비상 정지하고 사진 찍어
+2026-09-17 15:52:25,022 | INFO | LLM 원본 응답: {"status": "accepted", "commands": [{"name": "emergency_stop", "arguments": {}}, {"name": "take_photo", "arguments": {"count": 1}}], "message": null}
+2026-09-17 15:52:25,023 | ERROR | LLM 출력 검증 실패: LoRA inference output was rejected: Model output does not match the schema: commands: [{'name': 'emergency_stop', 'arguments': {}}, {'name': 'take_photo', 'arguments': {'count': 1}}] is too long
+
+명령> 사람이 손을 흔들면 착륙해
+2026-09-17 15:52:34,250 | INFO | 사용자 명령: 사람이 손을 흔들면 착륙해
+2026-09-17 15:52:37,020 | INFO | LLM 원본 응답: {"status": "unsupported", "commands": [], "message": "사람이 손을 흔들면 착륙하는 조 건부 명령은 현재 지원하지 않습니다."}
+2026-09-17 15:52:37,021 | INFO | LLM 출력 검증 성공: status=unsupported, commands=[]
+{
+  "status": "unsupported",
+  "commands": [],
+  "message": "사람이 손을 흔들면 착륙하는 조건부 명령은 현재 지원하지 않습니다."
+}
+
+명령> 수학 과제 좀 도와줘
+2026-09-17 15:52:45,059 | INFO | 사용자 명령: 수학 과제 좀 도와줘
+2026-09-17 15:52:47,148 | INFO | LLM 원본 응답: {"status": "invalid", "commands": [], "message": "드론 명령으로 이해할 수 없습니다."}
+2026-09-17 15:52:47,149 | INFO | LLM 출력 검증 성공: status=invalid, commands=[]
+{
+  "status": "invalid",
+  "commands": [],
+  "message": "드론 명령으로 이해할 수 없습니다."
+}
