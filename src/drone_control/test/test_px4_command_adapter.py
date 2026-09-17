@@ -7,6 +7,7 @@ from px4_msgs.msg import VehicleStatus
 
 from drone_control.px4_command_adapter import calculate_takeoff_target
 from drone_control.px4_command_adapter import has_reached_altitude
+from drone_control.px4_command_adapter import has_reached_position
 from drone_control.px4_command_adapter import is_offboard_and_armed
 from drone_control.px4_command_adapter import is_vehicle_ready
 
@@ -165,6 +166,52 @@ def test_altitude_reached_rejects_negative_tolerance():
         has_reached_altitude(
             current_z_m=-2.3,
             target_z_m=-2.3,
+            tolerance_m=-0.1,
+        )
+
+
+@pytest.mark.parametrize(
+    ("current_position", "expected"),
+    [
+        # 목표 좌표와 완전히 같으면 도달한 상태다.
+        ((1.0, 2.0, -2.0), True),
+
+        # 목표에서 0.2m 떨어진 경계값까지 허용한다.
+        ((1.2, 2.0, -2.0), True),
+
+        # 세 축 오차의 직선거리가 0.2m 이내면 허용한다.
+        ((1.1, 2.1, -1.9), True),
+
+        # 한 축이라도 허용 거리보다 멀면 도달하지 않은 상태다.
+        ((1.21, 2.0, -2.0), False),
+
+        # 각 축의 오차가 작더라도 합산한 직선거리가 크면 거부한다.
+        ((1.15, 2.15, -1.85), False),
+    ],
+)
+def test_position_reached_uses_three_dimensional_distance(
+    current_position,
+    expected,
+):
+    """NED 세 축의 직선거리로 목표 위치 도달 여부를 판단한다."""
+    result = has_reached_position(
+        current_position=current_position,
+        target_position=(1.0, 2.0, -2.0),
+        tolerance_m=0.2,
+    )
+
+    assert result is expected
+
+
+def test_position_reached_rejects_negative_tolerance():
+    """음수 위치 허용 오차를 거부하는지 확인한다."""
+    with pytest.raises(
+        ValueError,
+        match="cannot be negative",
+    ):
+        has_reached_position(
+            current_position=(0.0, 0.0, 0.0),
+            target_position=(1.0, 0.0, -2.0),
             tolerance_m=-0.1,
         )
 
