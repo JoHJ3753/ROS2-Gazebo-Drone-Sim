@@ -24,6 +24,10 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            (
+                'px4_takeoff_test = '
+                'drone_control.px4_command_adapter:main'
+            ),
         ],
     },
 )
