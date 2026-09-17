@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from jsonschema import Draft7Validator
 from peft import PeftModel
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
@@ -22,10 +21,13 @@ DRONE_INTERFACE_SOURCE = (
 if str(DRONE_INTERFACE_SOURCE) not in sys.path:
     sys.path.insert(0, str(DRONE_INTERFACE_SOURCE))
 
-from drone_command_interface.prompts import SYSTEM_PROMPT  # noqa: E402
-from drone_command_interface.schemas import (  # noqa: E402
-    DRONE_COMMAND_SCHEMA,
+from drone_command_interface.command_output_parser import (  # noqa: E402
+    InvalidModelOutputError,
 )
+from drone_command_interface.command_output_parser import (  # noqa: E402
+    parse_command_output,
+)
+from drone_command_interface.prompts import SYSTEM_PROMPT  # noqa: E402
 
 
 DEFAULT_MODEL_PATH = Path("/home/work/models/qwen2.5-3b-instruct")
@@ -190,33 +192,18 @@ def generate_command(
 def parse_and_validate_response(
     raw_response: str,
 ) -> dict[str, Any]:
-    """모델 응답을 JSON으로 파싱하고 Function Schema로 검증한다."""
+    """
+    모델 원문을 공용 명령 파서로 검증한다.
+
+    공용 파서를 사용해 ROS 2 실행 경로와 LoRA 평가 경로가
+    동일한 JSON 및 Function Schema 규칙을 적용하도록 한다.
+    """
     try:
-        parsed_response = json.loads(raw_response)
-    except json.JSONDecodeError as error:
-        raise ValueError(
-            f"모델 응답이 올바른 JSON이 아닙니다: {error}"
+        return parse_command_output(raw_response)
+    except InvalidModelOutputError as error:
+        raise InvalidModelOutputError(
+            f"LoRA inference output was rejected: {error}"
         ) from error
-
-    validator = Draft7Validator(DRONE_COMMAND_SCHEMA)
-    validation_errors = sorted(
-        validator.iter_errors(parsed_response),
-        key=lambda item: list(item.path),
-    )
-
-    if validation_errors:
-        first_error = validation_errors[0]
-        error_path = ".".join(
-            str(path_part)
-            for path_part in first_error.path
-        )
-        raise ValueError(
-            "모델 응답이 Function Schema를 위반했습니다: "
-            f"path={error_path or '<root>'}, "
-            f"error={first_error.message}"
-        )
-
-    return parsed_response
 
 
 def run_inference(
@@ -238,11 +225,26 @@ def run_inference(
 
     try:
         parsed_response = parse_and_validate_response(raw_response)
-    except ValueError as error:
-        LOGGER.error("%s", error)
+    except InvalidModelOutputError as error:
+        # 검증에 실패한 출력은 화면에만 기록하고
+        # 이후 PX4 실행 계층으로 전달하지 않는다.
+        LOGGER.error(
+            "LLM 출력 검증 실패: %s",
+            error,
+        )
         return
 
-    LOGGER.info("JSON 파싱 및 Function Schema 검증에 성공했습니다.")
+    command_names = [
+        command["name"]
+        for command in parsed_response["commands"]
+    ]
+
+    # 강사님 요청에 따라 검증된 상태와 명령값도 로그로 기록한다.
+    LOGGER.info(
+        "LLM 출력 검증 성공: status=%s, commands=%s",
+        parsed_response["status"],
+        command_names,
+    )
     print(
         json.dumps(
             parsed_response,
@@ -284,7 +286,7 @@ def run_interactive_mode(
 
 
 def main() -> None:
-    """LoRA 추론 프로그램을 실행한다."""
+    """학습된 어댑터를 사용하는 추론 프로그램을 실행한다."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(message)s",
