@@ -4,6 +4,18 @@ from dataclasses import dataclass
 import math
 
 
+_RELATIVE_DIRECTIONS = frozenset(
+    {
+        "forward",
+        "backward",
+        "left",
+        "right",
+        "up",
+        "down",
+    }
+)
+
+
 class CoordinateCalculationError(ValueError):
     """좌표 계산에 사용할 수 없는 값이 입력되면 발생한다."""
 
@@ -57,11 +69,19 @@ def _require_finite(
 
 class CoordinateCalculator:
     """
-    홈 기준 명령 좌표를 PX4 로컬 NED 절대좌표로 변환한다.
+    사용자 명령 좌표를 PX4 로컬 NED 목표좌표로 변환한다.
 
-    사용자가 입력하는 altitude_m은 홈 위치보다 위쪽인 높이를
-    양수로 표현한다. PX4 NED에서는 아래쪽이 +Z이므로 계산할 때
-    홈의 down_m 값에서 altitude_m을 뺀다.
+    절대좌표는 저장된 홈 위치를 기준으로 계산한다.
+    상대좌표는 명령 시작 시점의 현재 위치와 기수 방향을 기준으로
+    계산한다.
+
+    PX4 NED 좌표계:
+        +X: 북쪽
+        +Y: 동쪽
+        +Z: 아래쪽
+
+    사용자가 입력하는 altitude_m과 up 방향은 위쪽을 양수로
+    표현하므로 PX4 down 좌표에서는 값을 빼야 한다.
     """
 
     def __init__(self, home_position: NedPosition) -> None:
@@ -129,4 +149,111 @@ class CoordinateCalculator:
                 self._home_position.down_m
                 - target_altitude_m
             ),
+        )
+
+    def calculate_relative_target(
+        self,
+        current_position: NedPosition,
+        heading_rad: float,
+        direction: str,
+        distance_m: float,
+    ) -> NedPosition:
+        """
+        현재 위치와 기수 방향을 기준으로 상대이동 목표를 계산한다.
+
+        heading_rad는 PX4 VehicleLocalPosition.heading 값이다.
+        0 라디안은 북쪽이며 양수 방향은 동쪽으로 회전한다.
+        direction은 Function Schema의 move_drone 표준값을 사용한다.
+        """
+        current_north_m = _require_finite(
+            "current_position.north_m",
+            current_position.north_m,
+        )
+        current_east_m = _require_finite(
+            "current_position.east_m",
+            current_position.east_m,
+        )
+        current_down_m = _require_finite(
+            "current_position.down_m",
+            current_position.down_m,
+        )
+        current_heading_rad = _require_finite(
+            "heading_rad",
+            heading_rad,
+        )
+        travel_distance_m = _require_finite(
+            "distance_m",
+            distance_m,
+        )
+
+        if not isinstance(direction, str):
+            raise CoordinateCalculationError(
+                "direction must be a supported string"
+            )
+
+        if direction not in _RELATIVE_DIRECTIONS:
+            raise CoordinateCalculationError(
+                f"unsupported relative direction: {direction}"
+            )
+
+        if travel_distance_m <= 0.0:
+            raise CoordinateCalculationError(
+                "distance_m must be greater than zero"
+            )
+
+        # PX4 heading은 -PI부터 +PI 사이의 라디안 값이다.
+        # 이 범위를 벗어나면 degree를 잘못 전달했을 가능성도 차단한다.
+        if not -math.pi <= current_heading_rad <= math.pi:
+            raise CoordinateCalculationError(
+                "heading_rad must be between -pi and pi"
+            )
+
+        current = NedPosition(
+            north_m=current_north_m,
+            east_m=current_east_m,
+            down_m=current_down_m,
+        )
+
+        # 수직 이동은 현재 기수 방향과 관계없이 NED Z축만 변경한다.
+        if direction == "up":
+            return NedPosition(
+                north_m=current.north_m,
+                east_m=current.east_m,
+                down_m=current.down_m - travel_distance_m,
+            )
+
+        if direction == "down":
+            return NedPosition(
+                north_m=current.north_m,
+                east_m=current.east_m,
+                down_m=current.down_m + travel_distance_m,
+            )
+
+        # 기체 기준 이동량을 forward와 right 축으로 표현한다.
+        forward_m = 0.0
+        right_m = 0.0
+
+        if direction == "forward":
+            forward_m = travel_distance_m
+        elif direction == "backward":
+            forward_m = -travel_distance_m
+        elif direction == "right":
+            right_m = travel_distance_m
+        elif direction == "left":
+            right_m = -travel_distance_m
+
+        # 기체 기준 벡터를 PX4 NED의 North와 East 벡터로 회전한다.
+        north_delta_m = (
+            forward_m * math.cos(current_heading_rad)
+            - right_m * math.sin(current_heading_rad)
+        )
+        east_delta_m = (
+            forward_m * math.sin(current_heading_rad)
+            + right_m * math.cos(current_heading_rad)
+        )
+
+        return NedPosition(
+            north_m=current.north_m + north_delta_m,
+            east_m=current.east_m + east_delta_m,
+            down_m=current.down_m,
         )

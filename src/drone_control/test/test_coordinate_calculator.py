@@ -187,3 +187,228 @@ def test_boolean_coordinate_is_rejected():
             east_m=0.0,
             altitude_m=2.0,
         )
+
+
+def make_current_position() -> NedPosition:
+    """상대이동 테스트에서 사용할 현재 NED 위치를 생성한다."""
+    return NedPosition(
+        north_m=10.0,
+        east_m=20.0,
+        down_m=-3.0,
+    )
+
+
+@pytest.mark.parametrize(
+    (
+        "direction",
+        "expected_north_m",
+        "expected_east_m",
+    ),
+    [
+        ("forward", 12.0, 20.0),
+        ("backward", 8.0, 20.0),
+        ("right", 10.0, 22.0),
+        ("left", 10.0, 18.0),
+    ],
+)
+def test_relative_horizontal_move_when_heading_north(
+    direction,
+    expected_north_m,
+    expected_east_m,
+):
+    """기수가 북쪽일 때 기체 기준 방향을 NED 좌표로 변환한다."""
+    calculator = CoordinateCalculator(
+        home_position=make_home_position()
+    )
+
+    target = calculator.calculate_relative_target(
+        current_position=make_current_position(),
+        heading_rad=0.0,
+        direction=direction,
+        distance_m=2.0,
+    )
+
+    assert target.north_m == pytest.approx(expected_north_m)
+    assert target.east_m == pytest.approx(expected_east_m)
+    assert target.down_m == pytest.approx(-3.0)
+
+
+@pytest.mark.parametrize(
+    (
+        "direction",
+        "expected_north_m",
+        "expected_east_m",
+    ),
+    [
+        ("forward", 10.0, 22.0),
+        ("backward", 10.0, 18.0),
+        ("right", 8.0, 20.0),
+        ("left", 12.0, 20.0),
+    ],
+)
+def test_relative_horizontal_move_when_heading_east(
+    direction,
+    expected_north_m,
+    expected_east_m,
+):
+    """기수가 동쪽일 때 기체 기준 방향을 NED 좌표로 변환한다."""
+    calculator = CoordinateCalculator(
+        home_position=make_home_position()
+    )
+
+    target = calculator.calculate_relative_target(
+        current_position=make_current_position(),
+        heading_rad=math.pi / 2.0,
+        direction=direction,
+        distance_m=2.0,
+    )
+
+    assert target.north_m == pytest.approx(expected_north_m)
+    assert target.east_m == pytest.approx(expected_east_m)
+    assert target.down_m == pytest.approx(-3.0)
+
+
+@pytest.mark.parametrize(
+    ("direction", "expected_down_m"),
+    [
+        ("up", -5.0),
+        ("down", -1.0),
+    ],
+)
+def test_relative_vertical_move_changes_ned_down(
+    direction,
+    expected_down_m,
+):
+    """상승과 하강 명령이 NED Down 축으로 변환되는지 확인한다."""
+    calculator = CoordinateCalculator(
+        home_position=make_home_position()
+    )
+
+    target = calculator.calculate_relative_target(
+        current_position=make_current_position(),
+        heading_rad=0.0,
+        direction=direction,
+        distance_m=2.0,
+    )
+
+    assert target.north_m == pytest.approx(10.0)
+    assert target.east_m == pytest.approx(20.0)
+    assert target.down_m == pytest.approx(expected_down_m)
+
+
+def test_relative_forward_move_uses_diagonal_heading():
+    """대각선 기수 방향의 전진 벡터를 두 NED 축으로 나눈다."""
+    calculator = CoordinateCalculator(
+        home_position=make_home_position()
+    )
+
+    target = calculator.calculate_relative_target(
+        current_position=make_current_position(),
+        heading_rad=math.pi / 4.0,
+        direction="forward",
+        distance_m=math.sqrt(2.0),
+    )
+
+    assert target.north_m == pytest.approx(11.0)
+    assert target.east_m == pytest.approx(21.0)
+    assert target.down_m == pytest.approx(-3.0)
+
+
+@pytest.mark.parametrize(
+    "distance_m",
+    [
+        0.0,
+        -1.0,
+    ],
+)
+def test_relative_move_rejects_non_positive_distance(distance_m):
+    """0 이하의 상대이동 거리를 거부한다."""
+    calculator = CoordinateCalculator(
+        home_position=make_home_position()
+    )
+
+    with pytest.raises(
+        CoordinateCalculationError,
+        match="greater than zero",
+    ):
+        calculator.calculate_relative_target(
+            current_position=make_current_position(),
+            heading_rad=0.0,
+            direction="forward",
+            distance_m=distance_m,
+        )
+
+
+@pytest.mark.parametrize(
+    "direction",
+    [
+        "north",
+        "clockwise",
+        "",
+        None,
+    ],
+)
+def test_relative_move_rejects_unsupported_direction(direction):
+    """Function Schema에 없는 상대이동 방향을 거부한다."""
+    calculator = CoordinateCalculator(
+        home_position=make_home_position()
+    )
+
+    with pytest.raises(
+        CoordinateCalculationError,
+        match="direction",
+    ):
+        calculator.calculate_relative_target(
+            current_position=make_current_position(),
+            heading_rad=0.0,
+            direction=direction,
+            distance_m=1.0,
+        )
+
+
+@pytest.mark.parametrize(
+    "heading_rad",
+    [
+        math.nan,
+        math.inf,
+        -math.inf,
+        math.pi + 0.01,
+        -math.pi - 0.01,
+    ],
+)
+def test_relative_move_rejects_invalid_heading(heading_rad):
+    """유효하지 않은 PX4 기수 방향을 거부한다."""
+    calculator = CoordinateCalculator(
+        home_position=make_home_position()
+    )
+
+    with pytest.raises(CoordinateCalculationError):
+        calculator.calculate_relative_target(
+            current_position=make_current_position(),
+            heading_rad=heading_rad,
+            direction="forward",
+            distance_m=1.0,
+        )
+
+
+def test_relative_move_rejects_non_finite_current_position():
+    """유효하지 않은 현재 위치로 상대 목표를 만들지 못하게 한다."""
+    calculator = CoordinateCalculator(
+        home_position=make_home_position()
+    )
+    invalid_position = NedPosition(
+        north_m=math.nan,
+        east_m=0.0,
+        down_m=-2.0,
+    )
+
+    with pytest.raises(
+        CoordinateCalculationError,
+        match="current_position.north_m",
+    ):
+        calculator.calculate_relative_target(
+            current_position=invalid_position,
+            heading_rad=0.0,
+            direction="forward",
+            distance_m=1.0,
+        )
