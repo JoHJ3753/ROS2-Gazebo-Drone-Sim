@@ -281,6 +281,9 @@ def evaluate_model(
             **model_inputs,
             max_new_tokens=max_new_tokens,
             do_sample=False,
+            temperature=None,
+            top_p=None,
+            top_k=None,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
         )

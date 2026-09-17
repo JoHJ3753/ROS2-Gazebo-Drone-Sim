@@ -256,6 +256,10 @@ def load_base_model(model_name: str) -> tuple[Any, Any]:
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.bfloat16,
+        # KT Cloud NVIDIA PyTorch 2.5 빌드는 Transformers 4.57이
+        # SDPA에 전달하는 enable_gqa 인자를 지원하지 않는다.
+        # PyTorch 교체 없이 Qwen GQA를 실행하도록 eager를 사용한다.
+        attn_implementation="eager",
     )
     model.to("cuda")
     model.config.use_cache = False
