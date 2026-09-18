@@ -14,20 +14,31 @@ from drone_control.px4_command_adapter import validate_target_mode
 
 
 def make_valid_position() -> VehicleLocalPosition:
-    """제어에 사용할 수 있는 유효한 로컬 위치를 생성한다."""
+    """제어에 사용할 수 있는 안정적인 로컬 위치를 생성한다."""
     position = VehicleLocalPosition()
     position.xy_valid = True
     position.z_valid = True
+    position.v_xy_valid = True
+    position.v_z_valid = True
+    position.heading_good_for_control = True
     position.x = 1.5
     position.y = -2.0
     position.z = -0.3
+    position.vx = 0.0
+    position.vy = 0.0
+    position.vz = 0.0
+    position.heading = 0.0
     return position
 
 
 def make_ready_status() -> VehicleStatus:
-    """이륙 전 검사를 통과한 기체 상태를 생성한다."""
+    """안전하게 자동 제어를 시작할 수 있는 상태를 생성한다."""
     status = VehicleStatus()
+    status.arming_state = VehicleStatus.ARMING_STATE_DISARMED
+    status.failsafe = False
     status.pre_flight_checks_pass = True
+    status.armed_time = 0
+    status.takeoff_time = 0
     return status
 
 
@@ -265,6 +276,7 @@ def test_offboard_and_armed_rejects_missing_status():
     [
         "absolute",
         "relative",
+        "rotation",
     ],
 )
 def test_validate_target_mode_accepts_supported_modes(target_mode):
@@ -287,3 +299,63 @@ def test_validate_target_mode_rejects_unsupported_modes(target_mode):
     """지원하지 않는 목표좌표 계산 모드를 거부하는지 확인한다."""
     with pytest.raises(ValueError):
         validate_target_mode(target_mode)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "field_value"),
+    [
+        ("arming_state", VehicleStatus.ARMING_STATE_ARMED),
+        ("failsafe", True),
+        ("pre_flight_checks_pass", False),
+        ("armed_time", 1),
+        ("takeoff_time", 1),
+    ],
+)
+def test_vehicle_is_not_ready_with_unsafe_status(
+    field_name,
+    field_value,
+):
+    """비행 이력이나 위험 상태가 있으면 시작을 거부한다."""
+    status = make_ready_status()
+    setattr(status, field_name, field_value)
+
+    assert not is_vehicle_ready(
+        make_valid_position(),
+        status,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "field_value"),
+    [
+        ("v_xy_valid", False),
+        ("v_z_valid", False),
+        ("vx", 0.16),
+        ("vy", 0.16),
+        ("vz", 0.11),
+        ("heading", float("nan")),
+    ],
+)
+def test_vehicle_is_not_ready_with_unstable_position(
+    field_name,
+    field_value,
+):
+    """속도나 방향 추정이 불안정하면 시작을 거부한다."""
+    position = make_valid_position()
+    setattr(position, field_name, field_value)
+
+    assert not is_vehicle_ready(
+        position,
+        make_ready_status(),
+    )
+
+
+def test_vehicle_ready_does_not_depend_on_heading_good_flag():
+    """유한한 heading은 노드의 연속 안정성 검사에서 판정한다."""
+    position = make_valid_position()
+    position.heading_good_for_control = False
+
+    assert is_vehicle_ready(
+        position,
+        make_ready_status(),
+    )

@@ -2,6 +2,8 @@
 
 from enum import Enum
 import math
+import os
+import time
 
 from px4_msgs.msg import OffboardControlMode
 from px4_msgs.msg import TrajectorySetpoint
@@ -18,6 +20,12 @@ from rclpy.qos import ReliabilityPolicy
 from drone_control.coordinate_calculator import CoordinateCalculationError
 from drone_control.coordinate_calculator import CoordinateCalculator
 from drone_control.coordinate_calculator import NedPosition
+from drone_control.yaw_calculator import (
+    YawCalculationError,
+    calculate_relative_yaw_target,
+    calculate_yaw_error_rad,
+    has_reached_yaw,
+)
 
 
 # 이 파일의 첫 번째 버전은 Gazebo 시뮬레이션 검증용이다.
@@ -27,6 +35,21 @@ NODE_NAME = "px4_command_adapter"
 CONTROL_PERIOD_SECONDS = 0.1
 SETPOINT_STREAM_COUNT = 20
 COMMAND_RETRY_INTERVAL_TICKS = 10
+
+REQUIRED_ROS_DOMAIN_ID = 42
+MESSAGE_FRESHNESS_TIMEOUT_SECONDS = 1.0
+START_STABILITY_REQUIRED_TICKS = 20
+
+MAX_START_HORIZONTAL_SPEED_MPS = 0.15
+MAX_START_VERTICAL_SPEED_MPS = 0.10
+MAX_START_HEADING_DRIFT_DEG = 3.0
+
+EXPECTED_COMMAND_PUBLISHER_COUNT = 1
+PX4_COMMAND_TOPICS = (
+    "/fmu/in/offboard_control_mode",
+    "/fmu/in/trajectory_setpoint",
+    "/fmu/in/vehicle_command",
+)
 
 DEFAULT_TAKEOFF_HEIGHT_M = 2.0
 DEFAULT_TARGET_NORTH_M = 1.0
@@ -43,20 +66,27 @@ DEFAULT_TARGET_ALTITUDE_M = 2.0
 #   앞·뒤·왼쪽·오른쪽 등의 상대좌표를 계산하는 방식
 TARGET_MODE_ABSOLUTE = "absolute"
 TARGET_MODE_RELATIVE = "relative"
+TARGET_MODE_ROTATION = "rotation"
+
 SUPPORTED_TARGET_MODES = frozenset(
     {
         TARGET_MODE_ABSOLUTE,
         TARGET_MODE_RELATIVE,
+        TARGET_MODE_ROTATION,
     }
 )
+
 
 DEFAULT_TARGET_MODE = TARGET_MODE_ABSOLUTE
 DEFAULT_RELATIVE_DIRECTION = "forward"
 DEFAULT_RELATIVE_DISTANCE_M = 1.0
+DEFAULT_RELATIVE_YAW_DEG = 90.0
 
 TAKEOFF_ALTITUDE_TOLERANCE_M = 0.15
 TARGET_POSITION_TOLERANCE_M = 0.2
+TARGET_YAW_TOLERANCE_DEG = 3.0
 FLOAT_COMPARISON_ABS_TOLERANCE = 1e-6
+
 
 PX4_TARGET_SYSTEM_ID = 1
 PX4_TARGET_COMPONENT_ID = 1
@@ -93,14 +123,53 @@ def is_vehicle_ready(
     position: VehicleLocalPosition | None,
     status: VehicleStatus | None,
 ) -> bool:
-    """위치와 이륙 전 검사 결과가 제어 가능한 상태인지 확인한다."""
+    """
+    기체가 안전하게 자동 제어를 시작할 수 있는지 확인한다.
+
+    VehicleLandDetected가 현재 PX4 DDS 출력에 포함되지 않으므로
+    무장 상태, 비행 시간, 위치 유효성, 속도 안정성을 조합해
+    지상 대기 상태를 보수적으로 판정한다.
+    """
     if position is None or status is None:
+        return False
+
+    if status.arming_state != VehicleStatus.ARMING_STATE_DISARMED:
+        return False
+
+    if status.failsafe or not status.pre_flight_checks_pass:
+        return False
+
+    if status.armed_time != 0 or status.takeoff_time != 0:
         return False
 
     if not position.xy_valid or not position.z_valid:
         return False
 
-    return status.pre_flight_checks_pass
+    if not position.v_xy_valid or not position.v_z_valid:
+        return False
+
+    values = (
+        position.x,
+        position.y,
+        position.z,
+        position.vx,
+        position.vy,
+        position.vz,
+        position.heading,
+    )
+
+    if not all(math.isfinite(float(value)) for value in values):
+        return False
+
+    horizontal_speed_mps = math.hypot(
+        float(position.vx),
+        float(position.vy),
+    )
+
+    if horizontal_speed_mps > MAX_START_HORIZONTAL_SPEED_MPS:
+        return False
+
+    return abs(float(position.vz)) <= MAX_START_VERTICAL_SPEED_MPS
 
 
 def has_reached_altitude(
@@ -171,7 +240,8 @@ def validate_target_mode(target_mode: str) -> str:
 
     if target_mode not in SUPPORTED_TARGET_MODES:
         raise ValueError(
-            "target_mode must be 'absolute' or 'relative'"
+            "target_mode must be 'absolute', 'relative', "
+            "or 'rotation'"
         )
 
     return target_mode
@@ -196,13 +266,14 @@ def is_offboard_and_armed(
 
 
 class AdapterState(Enum):
-    """PX4 어댑터의 절대좌표 이동 상태를 정의한다."""
+    """PX4 어댑터의 비행 제어 상태를 정의한다."""
 
     WAITING_FOR_READY = "waiting_for_ready"
     STREAMING_SETPOINTS = "streaming_setpoints"
     REQUESTING_OFFBOARD = "requesting_offboard"
     TAKING_OFF = "taking_off"
     MOVING_TO_TARGET = "moving_to_target"
+    ROTATING = "rotating"
     HOLDING = "holding"
     ERROR = "error"
 
@@ -225,6 +296,15 @@ class Px4CommandAdapter(Node):
     def __init__(self) -> None:
         """PX4 발행자, 구독자와 제어 타이머를 생성한다."""
         super().__init__(NODE_NAME)
+
+        actual_domain_id = os.environ.get("ROS_DOMAIN_ID", "0")
+
+        if actual_domain_id != str(REQUIRED_ROS_DOMAIN_ID):
+            raise RuntimeError(
+                "ROS_DOMAIN_ID must be "
+                f"{REQUIRED_ROS_DOMAIN_ID}, "
+                f"but received {actual_domain_id}"
+            )
 
         # 현재는 시뮬레이션 검증을 위해 ROS 2 파라미터로 목표를 받는다.
         # 이후 검증된 LLM 명령 실행기가 이 값들을 전달하도록 연결할 수 있다.
@@ -264,6 +344,12 @@ class Px4CommandAdapter(Node):
             self.declare_parameter(
                 "relative_distance_m",
                 DEFAULT_RELATIVE_DISTANCE_M,
+            ).value
+        )
+        self._relative_yaw_deg = float(
+            self.declare_parameter(
+                "relative_yaw_deg",
+                DEFAULT_RELATIVE_YAW_DEG,
             ).value
         )
 
@@ -308,6 +394,11 @@ class Px4CommandAdapter(Node):
         self._state = AdapterState.WAITING_FOR_READY
         self._vehicle_local_position: VehicleLocalPosition | None = None
         self._vehicle_status: VehicleStatus | None = None
+        self._last_position_received_at: float | None = None
+        self._last_status_received_at: float | None = None
+        self._start_stability_counter = 0
+        self._start_reset_signature: tuple[int, int, int] | None = None
+        self._start_heading_rad: float | None = None
 
         # _target_position은 현재 PX4에 전송하는 목표다.
         # 이륙 중에는 수직 이륙 목표이고, 이륙 완료 후에는
@@ -343,6 +434,7 @@ class Px4CommandAdapter(Node):
     ) -> None:
         """PX4의 최신 로컬 위치를 저장한다."""
         self._vehicle_local_position = message
+        self._last_position_received_at = time.monotonic()
 
     def _vehicle_status_callback(
         self,
@@ -350,11 +442,31 @@ class Px4CommandAdapter(Node):
     ) -> None:
         """PX4의 최신 시동 상태와 비행 모드를 저장한다."""
         self._vehicle_status = message
+        self._last_status_received_at = time.monotonic()
 
     def _timer_callback(self) -> None:
-        """현재 상태에 따라 이륙과 절대좌표 이동 절차를 진행한다."""
+        """안전 조건을 확인한 뒤 현재 비행 단계를 진행한다."""
+        if self._state is AdapterState.ERROR:
+            return
+
+        competing_topics = self._find_competing_command_publishers()
+
+        if competing_topics:
+            self._enter_error(
+                "Competing PX4 command publishers detected: "
+                + ", ".join(competing_topics)
+            )
+            return
+
         if self._state is AdapterState.WAITING_FOR_READY:
-            if not self._is_vehicle_ready():
+            if (
+                not self._messages_are_fresh()
+                or not self._is_vehicle_ready()
+            ):
+                self._reset_start_safety_window()
+                return
+
+            if not self._update_start_safety_window():
                 return
 
             try:
@@ -367,8 +479,7 @@ class Px4CommandAdapter(Node):
                 ValueError,
             ) as error:
                 # 잘못된 좌표가 PX4로 전달되기 전에 실행을 중단한다.
-                self._state = AdapterState.ERROR
-                self.get_logger().error(
+                self._enter_error(
                     f"Failed to prepare mission target: {error}"
                 )
                 return
@@ -379,7 +490,34 @@ class Px4CommandAdapter(Node):
                 "Vehicle data is valid. Starting setpoint stream."
             )
 
-        if self._state is AdapterState.ERROR:
+        if not self._messages_are_fresh():
+            self._enter_error(
+                "PX4 position or status message became stale."
+            )
+            return
+
+        if self._vehicle_status is not None:
+            if self._vehicle_status.failsafe:
+                self._enter_error(
+                    "PX4 entered failsafe. Stopping setpoint output."
+                )
+                return
+
+        controlled_states = {
+            AdapterState.TAKING_OFF,
+            AdapterState.MOVING_TO_TARGET,
+            AdapterState.ROTATING,
+            AdapterState.HOLDING,
+        }
+
+        if (
+            self._state in controlled_states
+            and not self._is_offboard_and_armed()
+        ):
+            self._enter_error(
+                "Offboard mode or armed state was lost. "
+                "Stopping setpoint output."
+            )
             return
 
         # PX4는 Offboard 모드로 전환하기 전에 일정 시간 이상
@@ -403,8 +541,106 @@ class Px4CommandAdapter(Node):
             self._handle_move_to_target()
             return
 
+        if self._state is AdapterState.ROTATING:
+            self._handle_rotation()
+            return
+
         if self._state is AdapterState.HOLDING:
             self._monitor_holding_state()
+
+    def _messages_are_fresh(self) -> bool:
+        """PX4 위치와 상태 메시지가 최근에 수신됐는지 확인한다."""
+        received_times = (
+            self._last_position_received_at,
+            self._last_status_received_at,
+        )
+
+        if any(value is None for value in received_times):
+            return False
+
+        now = time.monotonic()
+        return all(
+            now - float(received_at)
+            <= MESSAGE_FRESHNESS_TIMEOUT_SECONDS
+            for received_at in received_times
+        )
+
+    def _current_reset_signature(self) -> tuple[int, int, int] | None:
+        """추정기 위치와 방향 재설정 카운터를 반환한다."""
+        position = self._vehicle_local_position
+
+        if position is None:
+            return None
+
+        return (
+            int(position.xy_reset_counter),
+            int(position.z_reset_counter),
+            int(position.heading_reset_counter),
+        )
+
+    def _reset_start_safety_window(self) -> None:
+        """연속 안정성 검사를 처음부터 다시 시작한다."""
+        self._start_stability_counter = 0
+        self._start_reset_signature = None
+        self._start_heading_rad = None
+
+    def _update_start_safety_window(self) -> bool:
+        """안전 상태가 2초 동안 연속 유지됐는지 확인한다."""
+        reset_signature = self._current_reset_signature()
+
+        if reset_signature is None:
+            self._reset_start_safety_window()
+            return False
+
+        if reset_signature != self._start_reset_signature:
+            self._start_reset_signature = reset_signature
+            self._start_heading_rad = float(
+                self._vehicle_local_position.heading
+            )
+            self._start_stability_counter = 1
+            return False
+
+        current_heading_rad = float(
+            self._vehicle_local_position.heading
+        )
+
+        if self._start_heading_rad is None:
+            self._start_heading_rad = current_heading_rad
+            self._start_stability_counter = 1
+            return False
+
+        heading_drift_rad = calculate_yaw_error_rad(
+            current_yaw_rad=current_heading_rad,
+            target_yaw_rad=self._start_heading_rad,
+        )
+
+        if (
+            math.degrees(heading_drift_rad)
+            > MAX_START_HEADING_DRIFT_DEG
+        ):
+            self._start_heading_rad = current_heading_rad
+            self._start_stability_counter = 1
+            return False
+
+        self._start_stability_counter += 1
+        return (
+            self._start_stability_counter
+            >= START_STABILITY_REQUIRED_TICKS
+        )
+
+    def _find_competing_command_publishers(self) -> list[str]:
+        """자신 외에 PX4 제어 토픽 발행자가 있는지 확인한다."""
+        return [
+            topic_name
+            for topic_name in PX4_COMMAND_TOPICS
+            if self.count_publishers(topic_name)
+            > EXPECTED_COMMAND_PUBLISHER_COUNT
+        ]
+
+    def _enter_error(self, message: str) -> None:
+        """오류 상태로 전환해 이후 제어 메시지 발행을 막는다."""
+        self._state = AdapterState.ERROR
+        self.get_logger().error(message)
 
     def _is_vehicle_ready(self) -> bool:
         """이륙 목표를 생성할 수 있는 상태인지 확인한다."""
@@ -508,7 +744,7 @@ class Px4CommandAdapter(Node):
                 f"y={mission_target.east_m:.2f}, "
                 f"z={mission_target.down_m:.2f}"
             )
-        else:
+        elif self._target_mode == TARGET_MODE_RELATIVE:
             self.get_logger().info(
                 "Coordinate command input: "
                 "source=ROS 2 parameters, "
@@ -535,15 +771,34 @@ class Px4CommandAdapter(Node):
             self.get_logger().info(
                 "Relative command validation completed before takeoff."
             )
+        else:
+            self.get_logger().info(
+                "Yaw command input: "
+                "source=ROS 2 parameters, "
+                "mode=rotation, "
+                "frame=body-relative, "
+                f"yaw_deg={self._relative_yaw_deg:.2f}"
+            )
 
-        # 절대좌표와 상대좌표 모두 먼저 현재 x와 y를 유지하며
-        # 수직으로 이륙한다.
+            # 실제 목표 yaw는 이륙 완료 시점의 기수 방향을 기준으로
+            # 다시 계산한다. 여기서는 입력값의 유효성만 검사한다.
+            calculate_relative_yaw_target(
+                current_heading_rad=position.heading,
+                yaw_deg=self._relative_yaw_deg,
+            )
+            self._mission_target_position = None
+
+            self.get_logger().info(
+                "Rotation command validation completed before takeoff."
+            )
+
+        # 모든 목표 모드는 먼저 현재 x와 y를 유지하며 수직 이륙한다.
         self._prepare_takeoff_target(takeoff_height_m)
 
     def _prepare_post_takeoff_target(
         self,
     ) -> tuple[float, float, float]:
-        """이륙 완료 시점의 이동 모드에 맞는 최종 목표를 반환한다."""
+        """이륙 완료 시점의 목표 위치와 목표 yaw를 준비한다."""
         if self._target_mode == TARGET_MODE_ABSOLUTE:
             if self._mission_target_position is None:
                 raise RuntimeError(
@@ -553,12 +808,35 @@ class Px4CommandAdapter(Node):
             return self._mission_target_position
 
         position = self._vehicle_local_position
-        coordinate_calculator = self._coordinate_calculator
 
         if position is None:
             raise RuntimeError(
-                "Vehicle position is required for relative movement"
+                "Vehicle position is required after takeoff"
             )
+
+        if self._target_mode == TARGET_MODE_ROTATION:
+            # 회전하는 동안 현재 위치를 그대로 유지한다.
+            self._target_yaw_rad = calculate_relative_yaw_target(
+                current_heading_rad=position.heading,
+                yaw_deg=self._relative_yaw_deg,
+            )
+
+            self.get_logger().info(
+                "Yaw conversion result: "
+                "mode=rotation, "
+                "frame=PX4 local NED, "
+                f"current_heading_rad={position.heading:.3f}, "
+                f"relative_yaw_deg={self._relative_yaw_deg:.2f}, "
+                f"target_yaw_rad={self._target_yaw_rad:.3f}"
+            )
+
+            return (
+                float(position.x),
+                float(position.y),
+                float(position.z),
+            )
+
+        coordinate_calculator = self._coordinate_calculator
 
         if coordinate_calculator is None:
             raise RuntimeError(
@@ -664,8 +942,15 @@ class Px4CommandAdapter(Node):
         # 수직 이륙이 끝난 후에만 수평 또는 추가 수직 이동 목표로
         # 전환한다. 이 순서를 지켜야 대각선 이륙을 방지할 수 있다.
         self._target_position = mission_target
-        self._state = AdapterState.MOVING_TO_TARGET
 
+        if self._target_mode == TARGET_MODE_ROTATION:
+            self._state = AdapterState.ROTATING
+            self.get_logger().info(
+                "Takeoff target reached. Rotating to yaw target."
+            )
+            return
+
+        self._state = AdapterState.MOVING_TO_TARGET
         self.get_logger().info(
             "Takeoff target reached. "
             f"Moving to {self._target_mode} target."
@@ -722,6 +1007,54 @@ class Px4CommandAdapter(Node):
             "Holding target position."
         )
 
+    def _handle_rotation(self) -> None:
+        """현재 위치를 유지하면서 목표 yaw까지 회전한다."""
+        if not self._is_offboard_and_armed():
+            self._state = AdapterState.ERROR
+            self.get_logger().error(
+                "Offboard mode or armed state was lost while rotating."
+            )
+            return
+
+        try:
+            reached_target_yaw = self._has_reached_target_yaw()
+        except YawCalculationError as error:
+            self._state = AdapterState.ERROR
+            self.get_logger().error(
+                f"Failed to evaluate yaw target: {error}"
+            )
+            return
+
+        if not reached_target_yaw:
+            return
+
+        position = self._vehicle_local_position
+
+        if position is None:
+            self._state = AdapterState.ERROR
+            self.get_logger().error(
+                "Position data was lost after reaching yaw target."
+            )
+            return
+
+        yaw_error_rad = calculate_yaw_error_rad(
+            current_yaw_rad=float(position.heading),
+            target_yaw_rad=self._target_yaw_rad,
+        )
+
+        self.get_logger().info(
+            "Yaw target reached: "
+            "frame=PX4 local NED, "
+            f"current_yaw_rad={position.heading:.3f}, "
+            f"target_yaw_rad={self._target_yaw_rad:.3f}, "
+            f"error_deg={math.degrees(yaw_error_rad):.2f}"
+        )
+
+        self._state = AdapterState.HOLDING
+        self.get_logger().info(
+            "Rotation target reached. Holding target position and yaw."
+        )
+
     def _monitor_holding_state(self) -> None:
         """위치 유지 중 PX4 제어 상태가 정상인지 감시한다."""
         if self._is_offboard_and_armed():
@@ -770,6 +1103,19 @@ class Px4CommandAdapter(Node):
             ),
             target_position=target,
             tolerance_m=TARGET_POSITION_TOLERANCE_M,
+        )
+
+    def _has_reached_target_yaw(self) -> bool:
+        """현재 기수 방향이 목표 yaw 허용 오차 안인지 확인한다."""
+        position = self._vehicle_local_position
+
+        if position is None:
+            return False
+
+        return has_reached_yaw(
+            current_yaw_rad=float(position.heading),
+            target_yaw_rad=self._target_yaw_rad,
+            tolerance_deg=TARGET_YAW_TOLERANCE_DEG,
         )
 
     def _is_offboard_and_armed(self) -> bool:
