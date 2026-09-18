@@ -2,11 +2,11 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd"
   schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>sample_call</name>
+  <name>drone_llm</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Qwen-based ROS2 drone command service</description>
   <maintainer email="dongjae@example.com">hkit</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Apache-2.0</license>
 
   <!-- Python ROS 2 노드 실행에 필요한 라이브러리 -->
   <depend>rclpy</depend>
@@ -16,6 +16,11 @@
 
   <!-- 학습과 실행에서 동일한 드론 명령 프롬프트를 사용한다. -->
   <depend>drone_command_interface</depend>
+
+  <!-- YAML 설정이 포함된 LLM 서비스 launch 파일 실행에 필요하다. -->
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
