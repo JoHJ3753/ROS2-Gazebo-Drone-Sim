@@ -14,6 +14,9 @@
   <!-- AskLLM 서비스 인터페이스를 제공하는 패키지 -->
   <depend>llm_ros2</depend>
 
+  <!-- 학습과 실행에서 동일한 드론 명령 프롬프트를 사용한다. -->
+  <depend>drone_command_interface</depend>
+
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
