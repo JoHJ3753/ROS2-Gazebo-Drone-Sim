@@ -33,6 +33,27 @@ DEFAULT_TARGET_NORTH_M = 1.0
 DEFAULT_TARGET_EAST_M = 0.0
 DEFAULT_TARGET_ALTITUDE_M = 2.0
 
+# 목표좌표 계산 방식을 구분한다.
+#
+# absolute:
+#   이륙 시작 위치를 원점으로 사용하는 절대좌표 방식
+#
+# relative:
+#   명령 실행 시점의 기체 위치와 기수 방향을 기준으로
+#   앞·뒤·왼쪽·오른쪽 등의 상대좌표를 계산하는 방식
+TARGET_MODE_ABSOLUTE = "absolute"
+TARGET_MODE_RELATIVE = "relative"
+SUPPORTED_TARGET_MODES = frozenset(
+    {
+        TARGET_MODE_ABSOLUTE,
+        TARGET_MODE_RELATIVE,
+    }
+)
+
+DEFAULT_TARGET_MODE = TARGET_MODE_ABSOLUTE
+DEFAULT_RELATIVE_DIRECTION = "forward"
+DEFAULT_RELATIVE_DISTANCE_M = 1.0
+
 TAKEOFF_ALTITUDE_TOLERANCE_M = 0.15
 TARGET_POSITION_TOLERANCE_M = 0.2
 FLOAT_COMPARISON_ABS_TOLERANCE = 1e-6
@@ -143,6 +164,19 @@ def has_reached_position(
     )
 
 
+def validate_target_mode(target_mode: str) -> str:
+    """목표좌표 계산 모드가 지원되는 값인지 검증한다."""
+    if not isinstance(target_mode, str):
+        raise ValueError("target_mode must be a string")
+
+    if target_mode not in SUPPORTED_TARGET_MODES:
+        raise ValueError(
+            "target_mode must be 'absolute' or 'relative'"
+        )
+
+    return target_mode
+
+
 def is_offboard_and_armed(
     status: VehicleStatus | None,
 ) -> bool:
@@ -212,6 +246,26 @@ class Px4CommandAdapter(Node):
                 DEFAULT_TARGET_ALTITUDE_M,
             ).value
         )
+        # 이동 방식과 상대이동 명령을 ROS 2 파라미터로 받는다.
+        # 이후에는 검증된 LLM 명령 실행기가 이 값을 전달하게 된다.
+        self._target_mode = str(
+            self.declare_parameter(
+                "target_mode",
+                DEFAULT_TARGET_MODE,
+            ).value
+        )
+        self._relative_direction = str(
+            self.declare_parameter(
+                "relative_direction",
+                DEFAULT_RELATIVE_DIRECTION,
+            ).value
+        )
+        self._relative_distance_m = float(
+            self.declare_parameter(
+                "relative_distance_m",
+                DEFAULT_RELATIVE_DISTANCE_M,
+            ).value
+        )
 
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -264,6 +318,10 @@ class Px4CommandAdapter(Node):
         self._mission_target_position: (
             tuple[float, float, float] | None
         ) = None
+
+        # 홈 위치로 생성한 좌표 계산기를 보관한다.
+        # 상대이동에서는 이륙 완료 시점의 현재 좌표를 전달해 사용한다.
+        self._coordinate_calculator: CoordinateCalculator | None = None
 
         self._target_yaw_rad = 0.0
 
@@ -386,10 +444,10 @@ class Px4CommandAdapter(Node):
 
     def _prepare_mission_targets(self, takeoff_height_m: float) -> None:
         """
-        홈 위치를 저장하고 이륙 목표와 절대좌표 목표를 준비한다.
+        이동 모드를 검증하고 수직 이륙과 임무 목표를 준비한다.
 
-        모든 좌표를 이륙 전에 검증해 잘못된 목표값이 입력된 경우
-        PX4의 Offboard 전환과 시동이 시작되지 않도록 한다.
+        잘못된 모드나 좌표가 입력되면 PX4의 Offboard 전환과
+        시동이 시작되기 전에 실행을 중단한다.
         """
         position = self._vehicle_local_position
 
@@ -398,29 +456,21 @@ class Px4CommandAdapter(Node):
                 "Vehicle position is required to prepare mission"
             )
 
+        # 문자열 오타나 지원하지 않는 이동 모드를 이륙 전에 차단한다.
+        self._target_mode = validate_target_mode(self._target_mode)
+
         # 좌표를 어느 토픽과 좌표계에서 읽었는지 기록한다.
-        # 이 로그를 통해 PX4가 전달한 원본 좌표를 확인할 수 있다.
         self.get_logger().info(
             "Coordinate source: "
             "topic=/fmu/out/vehicle_local_position, "
             "frame=PX4 local NED, "
             f"x={position.x:.2f}, "
             f"y={position.y:.2f}, "
-            f"z={position.z:.2f}"
+            f"z={position.z:.2f}, "
+            f"heading_rad={position.heading:.3f}"
         )
 
-        # 아직 LLM과 실행기가 연결되지 않았으므로 현재는
-        # ROS 2 파라미터에서 읽은 임무 좌표를 기록한다.
-        self.get_logger().info(
-            "Coordinate command input: "
-            "source=ROS 2 parameters, "
-            "frame=home-relative, "
-            f"north_m={self._target_north_m:.2f}, "
-            f"east_m={self._target_east_m:.2f}, "
-            f"altitude_m={self._target_altitude_m:.2f}"
-        )
-
-        coordinate_calculator = CoordinateCalculator(
+        self._coordinate_calculator = CoordinateCalculator(
             NedPosition(
                 north_m=position.x,
                 east_m=position.y,
@@ -428,29 +478,130 @@ class Px4CommandAdapter(Node):
             )
         )
 
+        if self._target_mode == TARGET_MODE_ABSOLUTE:
+            self.get_logger().info(
+                "Coordinate command input: "
+                "source=ROS 2 parameters, "
+                "mode=absolute, "
+                "frame=home-relative, "
+                f"north_m={self._target_north_m:.2f}, "
+                f"east_m={self._target_east_m:.2f}, "
+                f"altitude_m={self._target_altitude_m:.2f}"
+            )
+
+            mission_target = (
+                self._coordinate_calculator.calculate_absolute_target(
+                    north_m=self._target_north_m,
+                    east_m=self._target_east_m,
+                    altitude_m=self._target_altitude_m,
+                )
+            )
+            self._mission_target_position = (
+                mission_target.as_px4_tuple()
+            )
+
+            self.get_logger().info(
+                "Coordinate conversion result: "
+                "mode=absolute, "
+                "frame=PX4 local NED, "
+                f"x={mission_target.north_m:.2f}, "
+                f"y={mission_target.east_m:.2f}, "
+                f"z={mission_target.down_m:.2f}"
+            )
+        else:
+            self.get_logger().info(
+                "Coordinate command input: "
+                "source=ROS 2 parameters, "
+                "mode=relative, "
+                "frame=body-relative, "
+                f"direction={self._relative_direction}, "
+                f"distance_m={self._relative_distance_m:.2f}"
+            )
+
+            # 상대이동 목표는 이륙 후 현재 위치를 기준으로 다시 계산한다.
+            # 여기서는 방향, 거리, heading 값이 유효한지만 검사한다.
+            self._coordinate_calculator.calculate_relative_target(
+                current_position=NedPosition(
+                    north_m=position.x,
+                    east_m=position.y,
+                    down_m=position.z,
+                ),
+                heading_rad=position.heading,
+                direction=self._relative_direction,
+                distance_m=self._relative_distance_m,
+            )
+            self._mission_target_position = None
+
+            self.get_logger().info(
+                "Relative command validation completed before takeoff."
+            )
+
+        # 절대좌표와 상대좌표 모두 먼저 현재 x와 y를 유지하며
+        # 수직으로 이륙한다.
+        self._prepare_takeoff_target(takeoff_height_m)
+
+    def _prepare_post_takeoff_target(
+        self,
+    ) -> tuple[float, float, float]:
+        """이륙 완료 시점의 이동 모드에 맞는 최종 목표를 반환한다."""
+        if self._target_mode == TARGET_MODE_ABSOLUTE:
+            if self._mission_target_position is None:
+                raise RuntimeError(
+                    "Absolute mission target is not available"
+                )
+
+            return self._mission_target_position
+
+        position = self._vehicle_local_position
+        coordinate_calculator = self._coordinate_calculator
+
+        if position is None:
+            raise RuntimeError(
+                "Vehicle position is required for relative movement"
+            )
+
+        if coordinate_calculator is None:
+            raise RuntimeError(
+                "Coordinate calculator is not available"
+            )
+
+        # 상대이동은 지상 출발점이 아니라 수직 이륙이 끝난 순간의
+        # 위치와 기수 방향을 기준으로 계산한다.
+        self.get_logger().info(
+            "Relative coordinate source: "
+            "topic=/fmu/out/vehicle_local_position, "
+            "frame=PX4 local NED, "
+            f"x={position.x:.2f}, "
+            f"y={position.y:.2f}, "
+            f"z={position.z:.2f}, "
+            f"heading_rad={position.heading:.3f}"
+        )
+
         mission_target = (
-            coordinate_calculator.calculate_absolute_target(
-                north_m=self._target_north_m,
-                east_m=self._target_east_m,
-                altitude_m=self._target_altitude_m,
+            coordinate_calculator.calculate_relative_target(
+                current_position=NedPosition(
+                    north_m=position.x,
+                    east_m=position.y,
+                    down_m=position.z,
+                ),
+                heading_rad=position.heading,
+                direction=self._relative_direction,
+                distance_m=self._relative_distance_m,
             )
         )
 
-        # 먼저 현재 x와 y를 유지하는 수직 이륙 목표를 만든다.
-        self._prepare_takeoff_target(takeoff_height_m)
-
-        # 이륙 완료 후 사용할 홈 기준 절대좌표 목표를 별도로 저장한다.
-        self._mission_target_position = mission_target.as_px4_tuple()
-
-        # 사용자 기준 좌표가 실제 PX4 NED 좌표로 어떻게 변환됐는지
-        # 기록해 좌표계 또는 부호 오류를 쉽게 확인할 수 있게 한다.
         self.get_logger().info(
             "Coordinate conversion result: "
+            "mode=relative, "
             "frame=PX4 local NED, "
+            f"direction={self._relative_direction}, "
+            f"distance_m={self._relative_distance_m:.2f}, "
             f"x={mission_target.north_m:.2f}, "
             f"y={mission_target.east_m:.2f}, "
             f"z={mission_target.down_m:.2f}"
         )
+
+        return mission_target.as_px4_tuple()
 
     def _handle_setpoint_streaming(self) -> None:
         """Offboard 전환 전에 필요한 목표 메시지를 먼저 전송한다."""
@@ -486,7 +637,7 @@ class Px4CommandAdapter(Node):
         self._command_retry_counter = 0
 
     def _handle_takeoff(self) -> None:
-        """수직 이륙을 완료한 뒤 절대좌표 이동을 시작한다."""
+        """수직 이륙을 완료한 뒤 선택한 좌표 방식으로 이동한다."""
         if not self._is_offboard_and_armed():
             self._state = AdapterState.ERROR
             self.get_logger().error(
@@ -497,26 +648,31 @@ class Px4CommandAdapter(Node):
         if not self._has_reached_takeoff_altitude():
             return
 
-        mission_target = self._mission_target_position
-
-        if mission_target is None:
+        try:
+            mission_target = self._prepare_post_takeoff_target()
+        except (
+            CoordinateCalculationError,
+            RuntimeError,
+            ValueError,
+        ) as error:
             self._state = AdapterState.ERROR
             self.get_logger().error(
-                "Absolute mission target is not available."
+                f"Failed to prepare post-takeoff target: {error}"
             )
             return
 
-        # 수직 이륙이 끝난 후에만 수평 좌표가 포함된 목표로 바꾼다.
-        # 이 순서를 지켜야 출발 지점에서 대각선으로 이륙하지 않는다.
+        # 수직 이륙이 끝난 후에만 수평 또는 추가 수직 이동 목표로
+        # 전환한다. 이 순서를 지켜야 대각선 이륙을 방지할 수 있다.
         self._target_position = mission_target
         self._state = AdapterState.MOVING_TO_TARGET
 
         self.get_logger().info(
-            "Takeoff target reached. Moving to absolute target."
+            "Takeoff target reached. "
+            f"Moving to {self._target_mode} target."
         )
 
     def _handle_move_to_target(self) -> None:
-        """절대좌표 목표까지 이동하고 도달하면 위치 유지로 전환한다."""
+        """최종 목표까지 이동하고 도달하면 위치 유지로 전환한다."""
         if not self._is_offboard_and_armed():
             self._state = AdapterState.ERROR
             self.get_logger().error(
@@ -562,7 +718,8 @@ class Px4CommandAdapter(Node):
 
         self._state = AdapterState.HOLDING
         self.get_logger().info(
-            "Absolute target reached. Holding target position."
+            f"{self._target_mode.capitalize()} target reached. "
+            "Holding target position."
         )
 
     def _monitor_holding_state(self) -> None:

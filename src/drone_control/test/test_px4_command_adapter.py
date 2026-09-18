@@ -10,6 +10,7 @@ from drone_control.px4_command_adapter import has_reached_altitude
 from drone_control.px4_command_adapter import has_reached_position
 from drone_control.px4_command_adapter import is_offboard_and_armed
 from drone_control.px4_command_adapter import is_vehicle_ready
+from drone_control.px4_command_adapter import validate_target_mode
 
 
 def make_valid_position() -> VehicleLocalPosition:
@@ -252,3 +253,37 @@ def test_offboard_and_armed_requires_both_states(
 def test_offboard_and_armed_rejects_missing_status():
     """기체 상태 메시지가 없으면 비행 가능 상태가 아니다."""
     assert not is_offboard_and_armed(None)
+
+
+# ============================================================
+# 목표좌표 계산 모드 검사
+# ============================================================
+
+
+@pytest.mark.parametrize(
+    "target_mode",
+    [
+        "absolute",
+        "relative",
+    ],
+)
+def test_validate_target_mode_accepts_supported_modes(target_mode):
+    """지원하는 목표좌표 계산 모드는 그대로 반환하는지 확인한다."""
+    assert validate_target_mode(target_mode) == target_mode
+
+
+@pytest.mark.parametrize(
+    "target_mode",
+    [
+        "",
+        "body",
+        "global",
+        "forward",
+        None,
+        1,
+    ],
+)
+def test_validate_target_mode_rejects_unsupported_modes(target_mode):
+    """지원하지 않는 목표좌표 계산 모드를 거부하는지 확인한다."""
+    with pytest.raises(ValueError):
+        validate_target_mode(target_mode)
