@@ -77,6 +77,41 @@ def test_move_with_speed_is_rejected() -> None:
         prepare_runtime_command(make_response([command]))
 
 
+def test_single_rotation_without_speed_is_accepted() -> None:
+    """회전각만 있는 단일 상대회전을 전달한다."""
+    command = {
+        "name": "rotate_relative",
+        "arguments": {"yaw_deg": 90.0},
+    }
+
+    assert prepare_runtime_command(make_response([command])) == command
+
+
+def test_rotation_with_speed_is_rejected() -> None:
+    """미구현 회전 속도는 무시하지 않고 거부한다."""
+    command = {
+        "name": "rotate_relative",
+        "arguments": {"yaw_deg": 90.0, "yaw_speed_dps": 30.0},
+    }
+
+    with pytest.raises(CommandBridgeError, match="yaw_speed_dps"):
+        prepare_runtime_command(make_response([command]))
+
+
+@pytest.mark.parametrize("yaw_deg", [180.0, 270.0, 360.0, -360.0])
+def test_rotation_without_guaranteed_path_is_rejected(
+    yaw_deg: float,
+) -> None:
+    """정규화 때문에 요청한 회전 경로가 보장되지 않으면 거부한다."""
+    command = {
+        "name": "rotate_relative",
+        "arguments": {"yaw_deg": yaw_deg},
+    }
+
+    with pytest.raises(CommandBridgeError, match="180도 이상"):
+        prepare_runtime_command(make_response([command]))
+
+
 def test_compound_command_is_rejected() -> None:
     """완료 확인 없이 연속 명령을 발행하지 않는다."""
     takeoff = {"name": "takeoff", "arguments": {"altitude_m": 2.0}}

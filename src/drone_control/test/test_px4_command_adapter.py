@@ -428,6 +428,7 @@ class RuntimeMoveAdapterStub:
         self.messages_fresh = True
         self.offboard_and_armed = True
         self.logger = FakeLogger()
+        self.flight_statuses: list[str] = []
 
     def _messages_are_fresh(self):
         return self.messages_fresh
@@ -438,6 +439,10 @@ class RuntimeMoveAdapterStub:
     def get_logger(self):
         """테스트용 로거를 반환한다."""
         return self.logger
+
+    def _publish_flight_status(self, status: str) -> None:
+        """실제 ROS 발행 대신 상태 알림을 기록한다."""
+        self.flight_statuses.append(status)
 
 
 def test_runtime_move_prepares_body_relative_target():
@@ -463,6 +468,7 @@ def test_runtime_move_prepares_body_relative_target():
         )
     )
     assert adapter._state is AdapterState.MOVING_TO_TARGET
+    assert adapter.flight_statuses == ["이동 중: 목표 위치로 비행"]
 
 
 def test_runtime_move_rejects_command_outside_holding_state():
@@ -586,6 +592,7 @@ def test_runtime_rotation_prepares_relative_yaw_target():
     assert adapter._target_yaw_rad == pytest.approx(math.pi / 2.0)
     assert adapter._target_position == original_position_target
     assert adapter._state is AdapterState.ROTATING
+    assert adapter.flight_statuses == ["회전 중: 목표 방향으로 기수 변경"]
 
 
 def test_runtime_rotation_rejects_command_outside_holding_state():

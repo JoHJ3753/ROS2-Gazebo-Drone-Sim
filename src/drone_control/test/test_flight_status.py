@@ -67,3 +67,28 @@ def test_landing_completion_reports_disarm() -> None:
     adapter._publish_flight_status.assert_called_once_with(
         "착륙 완료: 시동 해제 확인"
     )
+
+
+def test_runtime_rotation_reports_started() -> None:
+    """실제 상대회전 목표를 설정한 뒤 회전 중 상태를 알린다."""
+    adapter = make_adapter_stub()
+    adapter._state = AdapterState.HOLDING
+    adapter._messages_are_fresh = lambda: True
+    adapter._is_offboard_and_armed = lambda: True
+    adapter._target_position = (0.0, 0.0, -2.0)
+    position = SimpleNamespace(
+        xy_valid=True,
+        z_valid=True,
+        x=0.0,
+        y=0.0,
+        z=-2.0,
+        heading=0.0,
+    )
+    adapter._vehicle_local_position = position
+
+    Px4CommandAdapter.rotate_relative(adapter, 90.0, None)
+
+    assert adapter._state is AdapterState.ROTATING
+    adapter._publish_flight_status.assert_called_once_with(
+        "회전 중: 목표 방향으로 기수 변경"
+    )

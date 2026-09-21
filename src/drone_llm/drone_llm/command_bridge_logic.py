@@ -8,8 +8,9 @@ from drone_command_interface.command_output_parser import (
 
 
 SUPPORTED_RUNTIME_COMMANDS = frozenset(
-    {"takeoff", "land", "move_drone"}
+    {"takeoff", "land", "move_drone", "rotate_relative"}
 )
+MAX_UNAMBIGUOUS_YAW_DEG = 180.0
 
 
 class CommandBridgeError(ValueError):
@@ -42,5 +43,19 @@ def prepare_runtime_command(raw_response: str) -> dict[str, Any]:
         raise CommandBridgeError(
             "이동 속도(speed_mps) 지정은 아직 지원하지 않습니다."
         )
+
+    if command["name"] == "rotate_relative":
+        arguments = command["arguments"]
+        if "yaw_speed_dps" in arguments:
+            raise CommandBridgeError(
+                "회전 속도(yaw_speed_dps) 지정은 아직 지원하지 않습니다."
+            )
+
+        # PX4 목표 yaw는 정규화되므로 큰 각도는 요청한 회전 경로를
+        # 보장하지 못한다. 360도는 제자리 완료로 판정될 수도 있다.
+        if abs(arguments["yaw_deg"]) >= MAX_UNAMBIGUOUS_YAW_DEG:
+            raise CommandBridgeError(
+                "180도 이상 회전은 현재 제어 방식으로 보장할 수 없습니다."
+            )
 
     return command

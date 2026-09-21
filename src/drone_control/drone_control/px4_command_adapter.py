@@ -710,6 +710,7 @@ class Px4CommandAdapter(Node):
         self.get_logger().info(
             "Move command accepted. Moving to relative target."
         )
+        self._publish_flight_status("이동 중: 목표 위치로 비행")
 
     def rotate_relative(
         self,
@@ -790,6 +791,7 @@ class Px4CommandAdapter(Node):
         self.get_logger().info(
             "Rotation command accepted. Rotating to yaw target."
         )
+        self._publish_flight_status("회전 중: 목표 방향으로 기수 변경")
 
     def hover(self, duration_s: float | None) -> None:
         """런타임 호버링은 다음 단계에서 구현한다."""
