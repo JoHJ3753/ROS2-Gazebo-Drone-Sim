@@ -12,6 +12,9 @@ from drone_control.px4_command_adapter import is_offboard_and_armed
 from drone_control.px4_command_adapter import is_vehicle_disarmed
 from drone_control.px4_command_adapter import is_vehicle_ready
 from drone_control.px4_command_adapter import validate_target_mode
+from drone_control.px4_command_adapter import AdapterState
+from drone_control.px4_command_adapter import Px4CommandAdapter
+from drone_control.px4_command_adapter import TARGET_MODE_RELATIVE
 
 
 def make_valid_position() -> VehicleLocalPosition:
@@ -388,4 +391,175 @@ def test_vehicle_ready_does_not_depend_on_heading_good_flag():
     assert is_vehicle_ready(
         position,
         make_ready_status(),
+    )
+
+
+class FakeLogger:
+    """런타임 이동 테스트에서 로그 호출을 기록한다."""
+
+    def __init__(self):
+        """기록할 로그 목록을 생성한다."""
+        self.messages = []
+
+    def info(self, message):
+        """정보 로그를 저장한다."""
+        self.messages.append(message)
+
+
+class RuntimeMoveAdapterStub:
+    """ROS 노드 없이 런타임 상대이동 메서드를 검사한다."""
+
+    def __init__(self):
+        """정상적인 호버링 상태와 위치 데이터를 준비한다."""
+        self._state = AdapterState.HOLDING
+        self._vehicle_local_position = make_valid_position()
+        self._target_mode = None
+        self._relative_direction = None
+        self._relative_distance_m = None
+        self._target_position = (
+            1.5,
+            -2.0,
+            -0.3,
+        )
+        self.messages_fresh = True
+        self.offboard_and_armed = True
+        self.logger = FakeLogger()
+
+    def _messages_are_fresh(self):
+        return self.messages_fresh
+
+    def _is_offboard_and_armed(self):
+        return self.offboard_and_armed
+
+    def get_logger(self):
+        """테스트용 로거를 반환한다."""
+        return self.logger
+
+
+def test_runtime_move_prepares_body_relative_target():
+    """호버링 중 기수 기준 상대이동 목표를 준비한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._vehicle_local_position.heading = 0.0
+
+    Px4CommandAdapter.move_drone(
+        adapter,
+        direction="forward",
+        distance_m=2.0,
+        speed_mps=None,
+    )
+
+    assert adapter._target_mode == TARGET_MODE_RELATIVE
+    assert adapter._relative_direction == "forward"
+    assert adapter._relative_distance_m == pytest.approx(2.0)
+    assert adapter._target_position == pytest.approx(
+        (
+            3.5,
+            -2.0,
+            -0.3,
+        )
+    )
+    assert adapter._state is AdapterState.MOVING_TO_TARGET
+
+
+def test_runtime_move_rejects_command_outside_holding_state():
+    """호버링 상태가 아니면 런타임 이동을 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.MOVING_TO_TARGET
+
+    with pytest.raises(
+        RuntimeError,
+        match="requires the adapter to be holding",
+    ):
+        Px4CommandAdapter.move_drone(
+            adapter,
+            direction="forward",
+            distance_m=1.0,
+            speed_mps=None,
+        )
+
+
+def test_runtime_move_rejects_stale_vehicle_data():
+    """PX4 데이터가 오래됐으면 런타임 이동을 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter.messages_fresh = False
+
+    with pytest.raises(
+        RuntimeError,
+        match="message is stale",
+    ):
+        Px4CommandAdapter.move_drone(
+            adapter,
+            direction="forward",
+            distance_m=1.0,
+            speed_mps=None,
+        )
+
+
+def test_runtime_move_requires_armed_offboard_vehicle():
+    """Armed 및 Offboard 상태가 아니면 이동을 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter.offboard_and_armed = False
+
+    with pytest.raises(
+        RuntimeError,
+        match="armed Offboard vehicle",
+    ):
+        Px4CommandAdapter.move_drone(
+            adapter,
+            direction="forward",
+            distance_m=1.0,
+            speed_mps=None,
+        )
+
+
+def test_runtime_move_rejects_speed_until_supported():
+    """속도 제어가 구현되기 전에는 speed_mps를 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+
+    with pytest.raises(
+        RuntimeError,
+        match="speed control is not implemented",
+    ):
+        Px4CommandAdapter.move_drone(
+            adapter,
+            direction="forward",
+            distance_m=1.0,
+            speed_mps=0.5,
+        )
+
+
+def test_runtime_horizontal_move_preserves_holding_altitude():
+    """수평 이동 중에는 기존 호버링 목표 고도를 유지한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._vehicle_local_position.z = -0.1
+
+    Px4CommandAdapter.move_drone(
+        adapter,
+        direction="forward",
+        distance_m=1.0,
+        speed_mps=None,
+    )
+
+    assert adapter._target_position[2] == pytest.approx(-0.3)
+
+
+def test_runtime_vertical_move_preserves_holding_xy_target():
+    """수직 이동 중에는 기존 호버링 수평 목표를 유지한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._vehicle_local_position.x = 1.7
+    adapter._vehicle_local_position.y = -1.8
+
+    Px4CommandAdapter.move_drone(
+        adapter,
+        direction="up",
+        distance_m=1.0,
+        speed_mps=None,
+    )
+
+    assert adapter._target_position == pytest.approx(
+        (
+            1.5,
+            -2.0,
+            -1.3,
+        )
     )

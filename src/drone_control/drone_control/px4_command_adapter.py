@@ -578,9 +578,119 @@ class Px4CommandAdapter(Node):
         distance_m: float,
         speed_mps: float | None,
     ) -> None:
-        """런타임 상대이동은 다음 단계에서 구현한다."""
-        raise RuntimeError(
-            "Runtime move command is not implemented"
+        """호버링 위치에서 기수 기준 상대이동을 시작한다."""
+        if self._state is not AdapterState.HOLDING:
+            raise RuntimeError(
+                "Move command requires the adapter to be holding"
+            )
+
+        if not self._messages_are_fresh():
+            raise RuntimeError(
+                "PX4 position or status message is stale"
+            )
+
+        if not self._is_offboard_and_armed():
+            raise RuntimeError(
+                "Move command requires an armed Offboard vehicle"
+            )
+
+        if speed_mps is not None:
+            raise RuntimeError(
+                "Runtime move speed control is not implemented"
+            )
+
+        position = self._vehicle_local_position
+
+        if position is None:
+            raise RuntimeError(
+                "Vehicle position is required to prepare movement"
+            )
+
+        if not position.xy_valid or not position.z_valid:
+            raise RuntimeError(
+                "Vehicle position is not valid for movement"
+            )
+
+        held_target = self._target_position
+
+        if held_target is None:
+            raise RuntimeError(
+                "Holding target is required to prepare movement"
+            )
+
+        coordinate_calculator = CoordinateCalculator(
+            NedPosition(
+                north_m=float(position.x),
+                east_m=float(position.y),
+                down_m=float(position.z),
+            )
+        )
+
+        try:
+            target = coordinate_calculator.calculate_relative_target(
+                current_position=NedPosition(
+                    north_m=float(position.x),
+                    east_m=float(position.y),
+                    down_m=float(position.z),
+                ),
+                heading_rad=float(position.heading),
+                direction=direction,
+                distance_m=distance_m,
+            )
+        except CoordinateCalculationError as error:
+            raise RuntimeError(
+                f"Failed to calculate runtime move target: {error}"
+            ) from error
+
+        # 이동하지 않는 축은 현재 측정값이 아니라 기존 호버링
+        # 목표값을 유지해 반복 명령에 의한 위치 드리프트를 막는다.
+        if direction in {
+            "forward",
+            "backward",
+            "left",
+            "right",
+        }:
+            target = NedPosition(
+                north_m=target.north_m,
+                east_m=target.east_m,
+                down_m=held_target[2],
+            )
+        else:
+            target = NedPosition(
+                north_m=held_target[0],
+                east_m=held_target[1],
+                down_m=target.down_m,
+            )
+
+        self.get_logger().info(
+            "Runtime move coordinate source: "
+            "topic=/fmu/out/vehicle_local_position, "
+            "frame=PX4 local NED, "
+            f"x={position.x:.2f}, "
+            f"y={position.y:.2f}, "
+            f"z={position.z:.2f}, "
+            f"heading_rad={position.heading:.3f}"
+        )
+
+        self.get_logger().info(
+            "Runtime move target prepared: "
+            "mode=relative, "
+            "frame=PX4 local NED, "
+            f"direction={direction}, "
+            f"distance_m={distance_m:.2f}, "
+            f"x={target.north_m:.2f}, "
+            f"y={target.east_m:.2f}, "
+            f"z={target.down_m:.2f}"
+        )
+
+        self._target_mode = TARGET_MODE_RELATIVE
+        self._relative_direction = direction
+        self._relative_distance_m = distance_m
+        self._target_position = target.as_px4_tuple()
+        self._state = AdapterState.MOVING_TO_TARGET
+
+        self.get_logger().info(
+            "Move command accepted. Moving to relative target."
         )
 
     def rotate_relative(
