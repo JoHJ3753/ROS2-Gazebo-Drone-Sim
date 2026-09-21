@@ -44,6 +44,8 @@ setup(
         "console_scripts": [
             "llm_service = drone_llm.llm_service_node:main",
             "llm_client = drone_llm.llm_client:main",
+            "command_bridge = drone_llm.command_bridge_node:main",
+            "drone_cli = drone_llm.drone_cli:main",
         ],
     },
 )

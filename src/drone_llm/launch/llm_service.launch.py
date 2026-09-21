@@ -22,5 +22,11 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
         parameters=[config_path],
     )
+    command_bridge_node = Node(
+        package="drone_llm",
+        executable="command_bridge",
+        name="command_bridge",
+        output="screen",
+    )
 
-    return LaunchDescription([llm_service_node])
+    return LaunchDescription([llm_service_node, command_bridge_node])

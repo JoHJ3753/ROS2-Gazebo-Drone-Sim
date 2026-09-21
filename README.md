@@ -711,14 +711,35 @@ ros2 service call \
   "{question: '앞으로 1m 이동해'}"
 ```
 
-현재 LLM 서비스는 모델 원문 응답을 반환합니다.
+터미널에서 자연어 명령을 반복 입력하려면 별도 터미널에서 실행합니다.
 
-다음 연결은 개발 중입니다.
+```bash
+source /opt/ros/humble/setup.bash
+source install/local_setup.bash
+
+ros2 run drone_llm drone_cli
+```
 
 ```text
-/ask_llm 응답
+명령 > 2미터 이륙해줘
+PX4 어댑터로 전달됨 (실행 완료 아님): {"name": "takeoff", "arguments": {"altitude_m": 2.0}}
+명령 > exit
+```
+
+이 명령을 실제로 받으려면 PX4 어댑터도 실행 중이어야 합니다.
+CLI의 "전달됨"은 PX4가 명령을 완료했다는 뜻이 아닙니다.
+현재 런타임에서는 단일 `takeoff` 명령만 연결되어 있으며,
+착륙·이동 등 미구현 명령과 복합 명령은 발행하지 않습니다.
+
+CLI와 별개로 `/ask_llm` 서비스는 모델 원문 응답을 반환합니다.
+CLI를 사용할 때의 연결 경로는 다음과 같습니다.
+
+```text
+명령 > 자연어 입력
+→ /drone/text_command
+→ /ask_llm 응답
 → command_output_parser
-→ commands 배열에서 명령 추출
+→ 지원 가능한 단일 명령 선별
 → /drone/validated_command 발행
 ```
 
