@@ -1,0 +1,101 @@
+2026-09-21 17:17:50,212 | INFO | 실험 디렉터리: /home/work/Arion_A/training/ROS2-Gazebo-Drone-Sim/training/outputs/2026-09-21_171750
+2026-09-21 17:17:50,325 | INFO | [실행 환경]
+2026-09-21 17:17:50,325 | INFO | git_commit: bc1a0469989bc912008c67ebf05934cea6608119
+2026-09-21 17:17:50,325 | INFO | python_version: 3.10.12
+2026-09-21 17:17:50,326 | INFO | platform: Linux-6.8.0-100-generic-x86_64-with-glibc2.35
+2026-09-21 17:17:50,326 | INFO | gpu: NVIDIA A100-SXM4-80GB
+2026-09-21 17:17:50,326 | INFO | cuda_version: 12.6
+2026-09-21 17:17:50,326 | INFO | pytorch_version: 2.5.0a0+b465a5843b.nv24.09
+2026-09-21 17:17:50,326 | INFO | transformers_version: 4.57.6
+2026-09-21 17:17:50,326 | INFO | datasets_version: 3.0.1
+2026-09-21 17:17:50,326 | INFO | peft_version: 0.15.2
+2026-09-21 17:17:51,662 | INFO | [Dataset]
+2026-09-21 17:17:51,662 | INFO | dataset_directory: /home/work/Arion_A/training/ROS2-Gazebo-Drone-Sim/data/dataset_v0.1
+2026-09-21 17:17:51,662 | INFO | train_samples: 200
+2026-09-21 17:17:51,662 | INFO | validation_samples: 20
+2026-09-21 17:17:51,662 | INFO | test_samples: 20
+2026-09-21 17:17:51,662 | INFO | robustness_test_samples: 0
+2026-09-21 17:17:51,662 | INFO | [학습 설정]
+2026-09-21 17:17:51,663 | INFO | base_model: Qwen/Qwen2.5-3B-Instruct
+2026-09-21 17:17:51,663 | INFO | initial_adapter: None
+2026-09-21 17:17:51,663 | INFO | epochs: 3.0
+2026-09-21 17:17:51,663 | INFO | learning_rate: 0.0002
+2026-09-21 17:17:51,663 | INFO | batch_size: 2
+2026-09-21 17:17:51,663 | INFO | gradient_accumulation_steps: 8
+2026-09-21 17:17:51,663 | INFO | max_sequence_length: 16384
+2026-09-21 17:17:51,663 | INFO | random_seed: 42
+2026-09-21 17:17:51,663 | INFO | lora_rank: 16
+2026-09-21 17:17:51,663 | INFO | lora_alpha: 32
+2026-09-21 17:17:51,663 | INFO | lora_dropout: 0.05
+2026-09-21 17:17:51,663 | INFO | lora_target_modules: ['q_proj', 'k_proj', 'v_proj', 'o_proj']
+2026-09-21 17:17:51,666 | INFO | 원본 Qwen 모델을 로드합니다.
+2026-09-21 17:17:56,112 | INFO | 파인튜닝 전 기준 평가를 시작합니다.
+2026-09-21 17:18:24,571 | INFO | [파인튜닝 전 평가]
+2026-09-21 17:18:24,572 | INFO | samples: 20
+2026-09-21 17:18:24,572 | INFO | json_parse: 90.0
+2026-09-21 17:18:24,572 | INFO | schema_valid: 70.0
+2026-09-21 17:18:24,572 | INFO | status_match: 50.0
+2026-09-21 17:18:24,572 | INFO | command_match: 55.0
+2026-09-21 17:18:24,572 | INFO | parameter_match: 50.0
+2026-09-21 17:18:24,572 | INFO | exact_match: 30.0
+2026-09-21 17:18:24,572 | INFO | hanja_free: 100.0
+2026-09-21 17:18:24,572 | INFO | categories: {'numeric': {'samples': 2, 'json_parse': 100.0, 'schema_valid': 100.0, 'status_match': 100.0, 'command_match': 100.0, 'parameter_match': 100.0, 'exact_match': 100.0, 'hanja_free': 100.0}, 'relative_position': {'samples': 2, 'json_parse': 100.0, 'schema_valid': 100.0, 'status_match': 100.0, 'command_match': 100.0, 'parameter_match': 100.0, 'exact_match': 100.0, 'hanja_free': 100.0}, 'compound': {'samples': 5, 'json_parse': 80.0, 'schema_valid': 80.0, 'status_match': 80.0, 'command_match': 60.0, 'parameter_match': 40.0, 'exact_match': 40.0, 'hanja_free': 100.0}, 'basic_single': {'samples': 1, 'json_parse': 100.0, 'schema_valid': 0.0, 'status_match': 100.0, 'command_match': 0.0, 'parameter_match': 0.0, 'exact_match': 0.0, 'hanja_free': 100.0}, 'ambiguous_or_impossible': {'samples': 9, 'json_parse': 88.89, 'schema_valid': 55.56, 'status_match': 11.11, 'command_match': 33.33, 'parameter_match': 33.33, 'exact_match': 0.0, 'hanja_free': 100.0}, 'vision_language': {'samples': 1, 'json_parse': 100.0, 'schema_valid': 100.0, 'status_match': 0.0, 'command_match': 100.0, 'parameter_match': 100.0, 'exact_match': 0.0, 'hanja_free': 100.0}}
+2026-09-21 17:18:26,950 | INFO | LoRA 학습을 시작합니다.
+2026-09-21 17:18:44,881 | INFO | trainer_step=1 | epoch=0.08 | grad_norm=2.220264196395874 | learning_rate=0.0 | loss=0.5001
+2026-09-21 17:19:02,492 | INFO | trainer_step=2 | epoch=0.16 | grad_norm=2.182875394821167 | learning_rate=5e-05 | loss=0.4036
+2026-09-21 17:19:18,787 | INFO | trainer_step=3 | epoch=0.24 | grad_norm=2.324169158935547 | learning_rate=0.0001 | loss=0.502
+2026-09-21 17:19:35,681 | INFO | trainer_step=4 | epoch=0.32 | grad_norm=3.0583369731903076 | learning_rate=0.00015000000000000001 | loss=0.3459
+2026-09-21 17:19:51,793 | INFO | trainer_step=5 | epoch=0.4 | grad_norm=1.3507229089736938 | learning_rate=0.0002 | loss=0.3063
+2026-09-21 17:20:08,389 | INFO | trainer_step=6 | epoch=0.48 | grad_norm=0.9395020008087158 | learning_rate=0.0001942857142857143 | loss=0.1343
+2026-09-21 17:20:24,981 | INFO | trainer_step=7 | epoch=0.56 | grad_norm=1.3401445150375366 | learning_rate=0.00018857142857142857 | loss=0.2916
+2026-09-21 17:20:42,280 | INFO | trainer_step=8 | epoch=0.64 | grad_norm=0.882802426815033 | learning_rate=0.00018285714285714286 | loss=0.2024
+2026-09-21 17:21:00,326 | INFO | trainer_step=9 | epoch=0.72 | grad_norm=1.0560787916183472 | learning_rate=0.00017714285714285713 | loss=0.1451
+2026-09-21 17:21:16,993 | INFO | trainer_step=10 | epoch=0.8 | grad_norm=0.6151958107948303 | learning_rate=0.00017142857142857143 | loss=0.0997
+2026-09-21 17:21:33,310 | INFO | trainer_step=11 | epoch=0.88 | grad_norm=0.41901347041130066 | learning_rate=0.00016571428571428575 | loss=0.0711
+2026-09-21 17:21:49,912 | INFO | trainer_step=12 | epoch=0.96 | grad_norm=0.4143800139427185 | learning_rate=0.00016 | loss=0.1319
+2026-09-21 17:21:58,281 | INFO | trainer_step=13 | epoch=1.0 | grad_norm=0.6730073690414429 | learning_rate=0.0001542857142857143 | loss=0.1938
+2026-09-21 17:22:04,484 | INFO | trainer_step=13 | epoch=1.0 | eval_loss=0.17910867929458618 | eval_runtime=6.201 | eval_samples_per_second=3.225 | eval_steps_per_second=1.613
+2026-09-21 17:22:21,949 | INFO | trainer_step=14 | epoch=1.08 | grad_norm=0.34523868560791016 | learning_rate=0.00014857142857142857 | loss=0.1022
+2026-09-21 17:22:39,589 | INFO | trainer_step=15 | epoch=1.16 | grad_norm=0.38615477085113525 | learning_rate=0.00014285714285714287 | loss=0.0986
+2026-09-21 17:22:56,272 | INFO | trainer_step=16 | epoch=1.24 | grad_norm=0.3695947527885437 | learning_rate=0.00013714285714285716 | loss=0.0905
+2026-09-21 17:23:13,277 | INFO | trainer_step=17 | epoch=1.32 | grad_norm=0.5337916016578674 | learning_rate=0.00013142857142857143 | loss=0.1363
+2026-09-21 17:23:29,419 | INFO | trainer_step=18 | epoch=1.4 | grad_norm=0.48711976408958435 | learning_rate=0.00012571428571428572 | loss=0.1288
+2026-09-21 17:23:45,889 | INFO | trainer_step=19 | epoch=1.48 | grad_norm=0.2768114507198334 | learning_rate=0.00012 | loss=0.0589
+2026-09-21 17:24:02,865 | INFO | trainer_step=20 | epoch=1.56 | grad_norm=0.23967507481575012 | learning_rate=0.00011428571428571428 | loss=0.0395
+2026-09-21 17:24:19,723 | INFO | trainer_step=21 | epoch=1.6400000000000001 | grad_norm=0.27433422207832336 | learning_rate=0.00010857142857142856 | loss=0.0657
+2026-09-21 17:24:35,653 | INFO | trainer_step=22 | epoch=1.72 | grad_norm=0.2997536063194275 | learning_rate=0.00010285714285714286 | loss=0.0899
+2026-09-21 17:24:53,341 | INFO | trainer_step=23 | epoch=1.8 | grad_norm=0.3826933205127716 | learning_rate=9.714285714285715e-05 | loss=0.1127
+2026-09-21 17:25:10,074 | INFO | trainer_step=24 | epoch=1.88 | grad_norm=0.28258779644966125 | learning_rate=9.142857142857143e-05 | loss=0.0731
+2026-09-21 17:25:27,757 | INFO | trainer_step=25 | epoch=1.96 | grad_norm=0.2206951230764389 | learning_rate=8.571428571428571e-05 | loss=0.0467
+2026-09-21 17:25:35,855 | INFO | trainer_step=26 | epoch=2.0 | grad_norm=0.524573802947998 | learning_rate=8e-05 | loss=0.191
+2026-09-21 17:25:42,055 | INFO | trainer_step=26 | epoch=2.0 | eval_loss=0.12042565643787384 | eval_runtime=6.1977 | eval_samples_per_second=3.227 | eval_steps_per_second=1.613
+2026-09-21 17:25:59,988 | INFO | trainer_step=27 | epoch=2.08 | grad_norm=0.20635554194450378 | learning_rate=7.428571428571429e-05 | loss=0.0498
+2026-09-21 17:26:17,703 | INFO | trainer_step=28 | epoch=2.16 | grad_norm=0.27140817046165466 | learning_rate=6.857142857142858e-05 | loss=0.086
+2026-09-21 17:26:34,427 | INFO | trainer_step=29 | epoch=2.24 | grad_norm=0.24033688008785248 | learning_rate=6.285714285714286e-05 | loss=0.0415
+2026-09-21 17:26:51,672 | INFO | trainer_step=30 | epoch=2.32 | grad_norm=0.25728896260261536 | learning_rate=5.714285714285714e-05 | loss=0.0624
+2026-09-21 17:27:08,680 | INFO | trainer_step=31 | epoch=2.4 | grad_norm=0.18782012164592743 | learning_rate=5.142857142857143e-05 | loss=0.0219
+2026-09-21 17:27:24,504 | INFO | trainer_step=32 | epoch=2.48 | grad_norm=0.2249135673046112 | learning_rate=4.5714285714285716e-05 | loss=0.059
+2026-09-21 17:27:40,700 | INFO | trainer_step=33 | epoch=2.56 | grad_norm=0.25732043385505676 | learning_rate=4e-05 | loss=0.055
+2026-09-21 17:27:57,180 | INFO | trainer_step=34 | epoch=2.64 | grad_norm=0.295215368270874 | learning_rate=3.428571428571429e-05 | loss=0.0924
+2026-09-21 17:28:14,317 | INFO | trainer_step=35 | epoch=2.7199999999999998 | grad_norm=0.18785111606121063 | learning_rate=2.857142857142857e-05 | loss=0.0383
+2026-09-21 17:28:30,867 | INFO | trainer_step=36 | epoch=2.8 | grad_norm=0.24287307262420654 | learning_rate=2.2857142857142858e-05 | loss=0.0364
+2026-09-21 17:28:47,850 | INFO | trainer_step=37 | epoch=2.88 | grad_norm=0.29210594296455383 | learning_rate=1.7142857142857145e-05 | loss=0.1205
+2026-09-21 17:29:04,998 | INFO | trainer_step=38 | epoch=2.96 | grad_norm=0.24707423150539398 | learning_rate=1.1428571428571429e-05 | loss=0.0754
+2026-09-21 17:29:13,346 | INFO | trainer_step=39 | epoch=3.0 | grad_norm=0.505759060382843 | learning_rate=5.7142857142857145e-06 | loss=0.0968
+2026-09-21 17:29:19,547 | INFO | trainer_step=39 | epoch=3.0 | eval_loss=0.10493457317352295 | eval_runtime=6.1986 | eval_samples_per_second=3.227 | eval_steps_per_second=1.613
+2026-09-21 17:29:20,639 | INFO | trainer_step=39 | epoch=3.0 | total_flos=3.034671987523584e+16 | train_loss=0.13839193997092736 | train_runtime=653.4941 | train_samples_per_second=0.918 | train_steps_per_second=0.06
+2026-09-21 17:29:20,641 | INFO | LoRA 학습이 완료되었습니다.
+2026-09-21 17:29:21,541 | INFO | LoRA Adapter 저장: /home/work/Arion_A/training/ROS2-Gazebo-Drone-Sim/training/outputs/2026-09-21_171750/adapter
+2026-09-21 17:29:21,541 | INFO | 파인튜닝 후 평가를 시작합니다.
+2026-09-21 17:30:01,943 | INFO | [파인튜닝 후 평가]
+2026-09-21 17:30:01,944 | INFO | samples: 20
+2026-09-21 17:30:01,944 | INFO | json_parse: 100.0
+2026-09-21 17:30:01,944 | INFO | schema_valid: 95.0
+2026-09-21 17:30:01,944 | INFO | status_match: 80.0
+2026-09-21 17:30:01,944 | INFO | command_match: 80.0
+2026-09-21 17:30:01,944 | INFO | parameter_match: 80.0
+2026-09-21 17:30:01,944 | INFO | exact_match: 50.0
+2026-09-21 17:30:01,944 | INFO | hanja_free: 100.0
+2026-09-21 17:30:01,944 | INFO | categories: {'numeric': {'samples': 2, 'json_parse': 100.0, 'schema_valid': 100.0, 'status_match': 100.0, 'command_match': 100.0, 'parameter_match': 100.0, 'exact_match': 100.0, 'hanja_free': 100.0}, 'relative_position': {'samples': 2, 'json_parse': 100.0, 'schema_valid': 100.0, 'status_match': 100.0, 'command_match': 100.0, 'parameter_match': 100.0, 'exact_match': 100.0, 'hanja_free': 100.0}, 'compound': {'samples': 5, 'json_parse': 100.0, 'schema_valid': 100.0, 'status_match': 80.0, 'command_match': 80.0, 'parameter_match': 80.0, 'exact_match': 80.0, 'hanja_free': 100.0}, 'basic_single': {'samples': 1, 'json_parse': 100.0, 'schema_valid': 0.0, 'status_match': 100.0, 'command_match': 0.0, 'parameter_match': 0.0, 'exact_match': 0.0, 'hanja_free': 100.0}, 'ambiguous_or_impossible': {'samples': 9, 'json_parse': 100.0, 'schema_valid': 100.0, 'status_match': 66.67, 'command_match': 77.78, 'parameter_match': 77.78, 'exact_match': 22.22, 'hanja_free': 100.0}, 'vision_language': {'samples': 1, 'json_parse': 100.0, 'schema_valid': 100.0, 'status_match': 100.0, 'command_match': 100.0, 'parameter_match': 100.0, 'exact_match': 0.0, 'hanja_free': 100.0}}
+2026-09-21 17:30:01,950 | INFO | 남은 실패 샘플 수: 10
+2026-09-21 17:30:01,950 | INFO | 모든 결과 저장 완료: /home/work/Arion_A/training/ROS2-Gazebo-Drone-Sim/training/outputs/2026-09-21_171750
