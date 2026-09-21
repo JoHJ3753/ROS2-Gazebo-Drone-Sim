@@ -716,9 +716,79 @@ class Px4CommandAdapter(Node):
         yaw_deg: float,
         yaw_speed_dps: float | None,
     ) -> None:
-        """런타임 상대회전은 다음 단계에서 구현한다."""
-        raise RuntimeError(
-            "Runtime rotation command is not implemented"
+        """호버링 위치에서 현재 기수를 기준으로 상대회전을 시작한다."""
+        if self._state is not AdapterState.HOLDING:
+            raise RuntimeError(
+                "Rotation command requires the adapter to be holding"
+            )
+
+        if not self._messages_are_fresh():
+            raise RuntimeError(
+                "PX4 position or status message is stale"
+            )
+
+        if not self._is_offboard_and_armed():
+            raise RuntimeError(
+                "Rotation command requires an armed Offboard vehicle"
+            )
+
+        if yaw_speed_dps is not None:
+            raise RuntimeError(
+                "Runtime rotation speed control is not implemented"
+            )
+
+        position = self._vehicle_local_position
+
+        if position is None:
+            raise RuntimeError(
+                "Vehicle position is required to prepare rotation"
+            )
+
+        if not position.xy_valid or not position.z_valid:
+            raise RuntimeError(
+                "Vehicle position is not valid for rotation"
+            )
+
+        if self._target_position is None:
+            raise RuntimeError(
+                "Holding target is required to prepare rotation"
+            )
+
+        try:
+            target_yaw_rad = calculate_relative_yaw_target(
+                current_heading_rad=float(position.heading),
+                yaw_deg=yaw_deg,
+            )
+        except YawCalculationError as error:
+            raise RuntimeError(
+                f"Failed to calculate runtime yaw target: {error}"
+            ) from error
+
+        self.get_logger().info(
+            "Runtime rotation source: "
+            "topic=/fmu/out/vehicle_local_position, "
+            "frame=PX4 local NED, "
+            f"x={position.x:.2f}, "
+            f"y={position.y:.2f}, "
+            f"z={position.z:.2f}, "
+            f"heading_rad={position.heading:.3f}"
+        )
+
+        self.get_logger().info(
+            "Runtime rotation target prepared: "
+            "mode=rotation, "
+            "frame=PX4 local NED, "
+            f"relative_yaw_deg={yaw_deg:.2f}, "
+            f"target_yaw_rad={target_yaw_rad:.3f}"
+        )
+
+        self._target_mode = TARGET_MODE_ROTATION
+        self._relative_yaw_deg = yaw_deg
+        self._target_yaw_rad = target_yaw_rad
+        self._state = AdapterState.ROTATING
+
+        self.get_logger().info(
+            "Rotation command accepted. Rotating to yaw target."
         )
 
     def hover(self, duration_s: float | None) -> None:

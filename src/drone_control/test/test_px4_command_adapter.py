@@ -1,5 +1,6 @@
 """PX4 명령 어댑터의 좌표 계산과 상태 판정을 검증한다."""
 
+import math
 import pytest
 
 from px4_msgs.msg import VehicleLocalPosition
@@ -15,6 +16,7 @@ from drone_control.px4_command_adapter import validate_target_mode
 from drone_control.px4_command_adapter import AdapterState
 from drone_control.px4_command_adapter import Px4CommandAdapter
 from drone_control.px4_command_adapter import TARGET_MODE_RELATIVE
+from drone_control.px4_command_adapter import TARGET_MODE_ROTATION
 
 
 def make_valid_position() -> VehicleLocalPosition:
@@ -416,6 +418,8 @@ class RuntimeMoveAdapterStub:
         self._target_mode = None
         self._relative_direction = None
         self._relative_distance_m = None
+        self._relative_yaw_deg = None
+        self._target_yaw_rad = 0.0
         self._target_position = (
             1.5,
             -2.0,
@@ -563,3 +567,101 @@ def test_runtime_vertical_move_preserves_holding_xy_target():
             -1.3,
         )
     )
+
+
+def test_runtime_rotation_prepares_relative_yaw_target():
+    """호버링 중 현재 기수 기준 상대회전 목표를 준비한다."""
+    adapter = RuntimeMoveAdapterStub()
+    original_position_target = adapter._target_position
+    adapter._vehicle_local_position.heading = 0.0
+
+    Px4CommandAdapter.rotate_relative(
+        adapter,
+        yaw_deg=90.0,
+        yaw_speed_dps=None,
+    )
+
+    assert adapter._target_mode == TARGET_MODE_ROTATION
+    assert adapter._relative_yaw_deg == pytest.approx(90.0)
+    assert adapter._target_yaw_rad == pytest.approx(math.pi / 2.0)
+    assert adapter._target_position == original_position_target
+    assert adapter._state is AdapterState.ROTATING
+
+
+def test_runtime_rotation_rejects_command_outside_holding_state():
+    """호버링 상태가 아니면 런타임 회전을 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.ROTATING
+
+    with pytest.raises(
+        RuntimeError,
+        match="requires the adapter to be holding",
+    ):
+        Px4CommandAdapter.rotate_relative(
+            adapter,
+            yaw_deg=90.0,
+            yaw_speed_dps=None,
+        )
+
+
+def test_runtime_rotation_rejects_stale_vehicle_data():
+    """PX4 데이터가 오래됐으면 런타임 회전을 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter.messages_fresh = False
+
+    with pytest.raises(
+        RuntimeError,
+        match="message is stale",
+    ):
+        Px4CommandAdapter.rotate_relative(
+            adapter,
+            yaw_deg=90.0,
+            yaw_speed_dps=None,
+        )
+
+
+def test_runtime_rotation_requires_armed_offboard_vehicle():
+    """Armed 및 Offboard 상태가 아니면 회전을 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter.offboard_and_armed = False
+
+    with pytest.raises(
+        RuntimeError,
+        match="armed Offboard vehicle",
+    ):
+        Px4CommandAdapter.rotate_relative(
+            adapter,
+            yaw_deg=90.0,
+            yaw_speed_dps=None,
+        )
+
+
+def test_runtime_rotation_rejects_speed_until_supported():
+    """속도 제어 구현 전에는 yaw_speed_dps를 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+
+    with pytest.raises(
+        RuntimeError,
+        match="speed control is not implemented",
+    ):
+        Px4CommandAdapter.rotate_relative(
+            adapter,
+            yaw_deg=90.0,
+            yaw_speed_dps=30.0,
+        )
+
+
+def test_runtime_rotation_rejects_invalid_heading():
+    """유효하지 않은 PX4 heading으로 목표를 만들지 않는다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._vehicle_local_position.heading = float("nan")
+
+    with pytest.raises(
+        RuntimeError,
+        match="Failed to calculate runtime yaw target",
+    ):
+        Px4CommandAdapter.rotate_relative(
+            adapter,
+            yaw_deg=90.0,
+            yaw_speed_dps=None,
+        )
