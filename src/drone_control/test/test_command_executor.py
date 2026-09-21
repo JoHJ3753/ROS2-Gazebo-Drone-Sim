@@ -56,6 +56,10 @@ class FakeDroneCommandHandler:
         """호버링 호출을 기록한다."""
         self.calls.append(("hover", duration_s))
 
+    def cancel(self) -> None:
+        """비행 동작 취소 호출을 기록한다."""
+        self.calls.append(("cancel",))
+
 
 @pytest.mark.parametrize(
     "command, expected_call",
@@ -110,6 +114,7 @@ class FakeDroneCommandHandler:
             {"name": "hover", "arguments": {"duration_s": 3.0}},
             ("hover", 3.0),
         ),
+        ({"name": "cancel", "arguments": {}}, ("cancel",)),
     ],
 )
 def test_execute_routes_valid_command(
@@ -170,6 +175,7 @@ def test_execute_rejects_invalid_command_structure(command: Any) -> None:
             "name": "hover",
             "arguments": {"unexpected": 1},
         },
+        {"name": "cancel", "arguments": {"unexpected": 1}},
     ],
 )
 def test_execute_rejects_missing_or_unexpected_arguments(

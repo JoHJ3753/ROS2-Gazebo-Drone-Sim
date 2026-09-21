@@ -10,6 +10,8 @@ from drone_control.px4_command_adapter import calculate_takeoff_target
 from drone_control.px4_command_adapter import has_reached_altitude
 from drone_control.px4_command_adapter import has_reached_position
 from drone_control.px4_command_adapter import is_offboard_and_armed
+from drone_control.px4_command_adapter import is_vehicle_speed_stable
+from drone_control.px4_command_adapter import is_vehicle_takeoff_eligible
 from drone_control.px4_command_adapter import is_vehicle_disarmed
 from drone_control.px4_command_adapter import is_vehicle_ready
 from drone_control.px4_command_adapter import validate_target_mode
@@ -17,6 +19,9 @@ from drone_control.px4_command_adapter import AdapterState
 from drone_control.px4_command_adapter import Px4CommandAdapter
 from drone_control.px4_command_adapter import TARGET_MODE_RELATIVE
 from drone_control.px4_command_adapter import TARGET_MODE_ROTATION
+from drone_control.px4_command_adapter import (
+    TAKEOFF_STABILITY_REQUIRED_TICKS,
+)
 
 
 def make_valid_position() -> VehicleLocalPosition:
@@ -396,6 +401,41 @@ def test_vehicle_ready_does_not_depend_on_heading_good_flag():
     )
 
 
+def test_takeoff_eligibility_allows_transient_speed_noise():
+    """기본 안전 상태는 순간적인 속도 초과와 별도로 판정한다."""
+    position = make_valid_position()
+    position.vz = 0.11
+    status = make_ready_status()
+
+    assert is_vehicle_takeoff_eligible(position, status)
+    assert not is_vehicle_speed_stable(position)
+    assert not is_vehicle_ready(position, status)
+
+
+@pytest.mark.parametrize(
+    ("vx", "vy", "vz", "expected"),
+    [
+        (0.0, 0.0, 0.0, True),
+        (0.15, 0.0, 0.10, True),
+        (0.16, 0.0, 0.0, False),
+        (0.0, 0.0, 0.11, False),
+    ],
+)
+def test_vehicle_speed_stability_uses_configured_limits(
+    vx,
+    vy,
+    vz,
+    expected,
+):
+    """수평 및 수직 속도 임계값을 독립적으로 적용한다."""
+    position = make_valid_position()
+    position.vx = vx
+    position.vy = vy
+    position.vz = vz
+
+    assert is_vehicle_speed_stable(position) is expected
+
+
 class FakeLogger:
     """런타임 이동 테스트에서 로그 호출을 기록한다."""
 
@@ -405,6 +445,10 @@ class FakeLogger:
 
     def info(self, message):
         """정보 로그를 저장한다."""
+        self.messages.append(message)
+
+    def warning(self, message):
+        """경고 로그를 저장한다."""
         self.messages.append(message)
 
 
@@ -426,6 +470,14 @@ class RuntimeMoveAdapterStub:
             -0.3,
         )
         self._hover_deadline_monotonic = None
+        self._vehicle_status = make_ready_status()
+        self._pending_takeoff_altitude_m = None
+        self._takeoff_stability_counter = 0
+        self._takeoff_stability_deadline_monotonic = None
+        self._mission_target_position = None
+        self._coordinate_calculator = None
+        self._setpoint_stream_counter = 0
+        self._command_retry_counter = 0
         self.flight_statuses: list[str] = []
         self.messages_fresh = True
         self.offboard_and_armed = True
@@ -440,6 +492,13 @@ class RuntimeMoveAdapterStub:
     def _publish_flight_status(self, status: str) -> None:
         """실제 ROS 발행 대신 상태 알림을 기록한다."""
         self.flight_statuses.append(status)
+
+    def _prepare_takeoff_target(self, height_m):
+        """실제 어댑터의 이륙 목표 계산을 호출한다."""
+        Px4CommandAdapter._prepare_takeoff_target(
+            self,
+            height_m,
+        )
 
     def get_logger(self):
         """테스트용 로거를 반환한다."""
@@ -791,3 +850,251 @@ def test_runtime_hover_requires_armed_offboard_vehicle():
             adapter,
             duration_s=3.0,
         )
+
+
+@pytest.mark.parametrize(
+    "active_state",
+    [
+        AdapterState.MOVING_TO_TARGET,
+        AdapterState.ROTATING,
+        AdapterState.HOVERING,
+    ],
+)
+def test_runtime_cancel_holds_current_position(active_state):
+    """취소 가능한 동작을 현재 위치와 기수에서 중단한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = active_state
+    adapter._hover_deadline_monotonic = 200.0
+    adapter._vehicle_local_position.x = 2.5
+    adapter._vehicle_local_position.y = -1.25
+    adapter._vehicle_local_position.z = -1.75
+    adapter._vehicle_local_position.heading = 0.75
+
+    Px4CommandAdapter.cancel(adapter)
+
+    assert adapter._state is AdapterState.HOLDING
+    assert adapter._target_position == pytest.approx(
+        (2.5, -1.25, -1.75)
+    )
+    assert adapter._target_yaw_rad == pytest.approx(0.75)
+    assert adapter._hover_deadline_monotonic is None
+    assert adapter.flight_statuses == [
+        "동작 취소 완료: 현재 위치에서 호버링"
+    ]
+
+
+@pytest.mark.parametrize(
+    "inactive_state",
+    [
+        AdapterState.IDLE,
+        AdapterState.HOLDING,
+        AdapterState.LANDING,
+    ],
+)
+def test_runtime_cancel_rejects_inactive_state(inactive_state):
+    """취소할 동작이 없거나 착륙 중이면 취소 명령을 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = inactive_state
+
+    with pytest.raises(
+        RuntimeError,
+        match="requires active movement",
+    ):
+        Px4CommandAdapter.cancel(adapter)
+
+
+def test_runtime_cancel_rejects_stale_vehicle_data():
+    """PX4 데이터가 오래됐으면 취소 명령을 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.MOVING_TO_TARGET
+    adapter.messages_fresh = False
+
+    with pytest.raises(
+        RuntimeError,
+        match="message is stale",
+    ):
+        Px4CommandAdapter.cancel(adapter)
+
+
+def test_runtime_cancel_requires_armed_offboard_vehicle():
+    """Armed 및 Offboard 상태가 아니면 취소 명령을 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.ROTATING
+    adapter.offboard_and_armed = False
+
+    with pytest.raises(
+        RuntimeError,
+        match="armed Offboard vehicle",
+    ):
+        Px4CommandAdapter.cancel(adapter)
+
+
+def test_runtime_cancel_rejects_invalid_position():
+    """유효하지 않은 현재 위치로 정지 목표를 생성하지 않는다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.MOVING_TO_TARGET
+    adapter._vehicle_local_position.z = float("nan")
+
+    with pytest.raises(
+        RuntimeError,
+        match="not valid for cancellation",
+    ):
+        Px4CommandAdapter.cancel(adapter)
+
+
+def test_runtime_takeoff_waits_for_stable_speed(monkeypatch):
+    """이륙 명령은 순간 속도 초과 시 거부되지 않고 대기한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.IDLE
+    adapter._vehicle_local_position.vz = 0.11
+    monkeypatch.setattr(
+        "drone_control.px4_command_adapter.time.monotonic",
+        lambda: 100.0,
+    )
+
+    Px4CommandAdapter.takeoff(
+        adapter,
+        altitude_m=2.0,
+    )
+
+    assert (
+        adapter._state
+        is AdapterState.WAITING_FOR_TAKEOFF_STABILITY
+    )
+    assert adapter._pending_takeoff_altitude_m == pytest.approx(2.0)
+    assert adapter._takeoff_stability_counter == 0
+    assert (
+        adapter._takeoff_stability_deadline_monotonic
+        == pytest.approx(115.0)
+    )
+    assert adapter.flight_statuses == [
+        "이륙 대기 중: 속도 안정화 확인"
+    ]
+
+
+def test_takeoff_stability_wait_resets_on_unstable_sample(monkeypatch):
+    """불안정한 속도 표본이 들어오면 연속 카운트를 초기화한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.WAITING_FOR_TAKEOFF_STABILITY
+    adapter._pending_takeoff_altitude_m = 2.0
+    adapter._takeoff_stability_counter = 5
+    adapter._takeoff_stability_deadline_monotonic = 115.0
+    adapter._vehicle_local_position.vz = 0.11
+    monkeypatch.setattr(
+        "drone_control.px4_command_adapter.time.monotonic",
+        lambda: 101.0,
+    )
+
+    Px4CommandAdapter._handle_takeoff_stability_wait(adapter)
+
+    assert (
+        adapter._state
+        is AdapterState.WAITING_FOR_TAKEOFF_STABILITY
+    )
+    assert adapter._takeoff_stability_counter == 0
+
+
+def test_takeoff_starts_after_consecutive_stable_samples(monkeypatch):
+    """필요한 연속 안정 표본이 모이면 이륙 세트포인트를 시작한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.WAITING_FOR_TAKEOFF_STABILITY
+    adapter._pending_takeoff_altitude_m = 2.0
+    adapter._takeoff_stability_counter = (
+        TAKEOFF_STABILITY_REQUIRED_TICKS - 1
+    )
+    adapter._takeoff_stability_deadline_monotonic = 115.0
+    monkeypatch.setattr(
+        "drone_control.px4_command_adapter.time.monotonic",
+        lambda: 101.0,
+    )
+
+    Px4CommandAdapter._handle_takeoff_stability_wait(adapter)
+
+    assert adapter._state is AdapterState.STREAMING_SETPOINTS
+    assert adapter._target_mode == "takeoff"
+    assert adapter._target_position == pytest.approx(
+        (1.5, -2.0, -2.3)
+    )
+    assert adapter._pending_takeoff_altitude_m is None
+    assert adapter._takeoff_stability_counter == 0
+    assert adapter._takeoff_stability_deadline_monotonic is None
+    assert adapter.flight_statuses == [
+        "이륙 준비 중: 목표 고도 2.00m"
+    ]
+
+
+def test_takeoff_stability_wait_times_out(monkeypatch):
+    """제한 시간 안에 안정되지 않으면 이륙 요청을 안전하게 취소한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.WAITING_FOR_TAKEOFF_STABILITY
+    adapter._pending_takeoff_altitude_m = 2.0
+    adapter._takeoff_stability_counter = 3
+    adapter._takeoff_stability_deadline_monotonic = 115.0
+    monkeypatch.setattr(
+        "drone_control.px4_command_adapter.time.monotonic",
+        lambda: 115.0,
+    )
+
+    Px4CommandAdapter._handle_takeoff_stability_wait(adapter)
+
+    assert adapter._state is AdapterState.IDLE
+    assert adapter._pending_takeoff_altitude_m is None
+    assert adapter._takeoff_stability_counter == 0
+    assert adapter._takeoff_stability_deadline_monotonic is None
+    assert adapter.flight_statuses == [
+        "이륙 취소: 기체 상태 안정화 시간 초과"
+    ]
+
+
+def test_runtime_cancel_clears_pending_takeoff():
+    """속도 안정화 대기 중인 이륙 요청도 취소할 수 있다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.WAITING_FOR_TAKEOFF_STABILITY
+    adapter._pending_takeoff_altitude_m = 2.0
+    adapter._takeoff_stability_counter = 4
+    adapter._takeoff_stability_deadline_monotonic = 115.0
+
+    Px4CommandAdapter.cancel(adapter)
+
+    assert adapter._state is AdapterState.IDLE
+    assert adapter._pending_takeoff_altitude_m is None
+    assert adapter._takeoff_stability_counter == 0
+    assert adapter._takeoff_stability_deadline_monotonic is None
+    assert adapter.flight_statuses == [
+        "이륙 대기 취소: 다음 명령 대기"
+    ]
+
+
+def test_adapter_vehicle_ready_wrapper_uses_current_messages():
+    """어댑터 준비 상태 래퍼가 현재 PX4 메시지를 사용한다."""
+    adapter = RuntimeMoveAdapterStub()
+
+    assert Px4CommandAdapter._is_vehicle_ready(adapter)
+
+
+def test_takeoff_wait_tolerates_transient_ineligible_state(monkeypatch):
+    """순간적인 준비 상태 해제는 요청 취소 대신 카운트만 초기화한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.WAITING_FOR_TAKEOFF_STABILITY
+    adapter._pending_takeoff_altitude_m = 2.0
+    adapter._takeoff_stability_counter = 5
+    adapter._takeoff_stability_deadline_monotonic = 115.0
+    adapter._vehicle_status.pre_flight_checks_pass = False
+    monkeypatch.setattr(
+        "drone_control.px4_command_adapter.time.monotonic",
+        lambda: 101.0,
+    )
+
+    Px4CommandAdapter._handle_takeoff_stability_wait(adapter)
+
+    assert (
+        adapter._state
+        is AdapterState.WAITING_FOR_TAKEOFF_STABILITY
+    )
+    assert adapter._pending_takeoff_altitude_m == pytest.approx(2.0)
+    assert adapter._takeoff_stability_counter == 0
+    assert (
+        adapter._takeoff_stability_deadline_monotonic
+        == pytest.approx(115.0)
+    )
+    assert adapter.flight_statuses == []

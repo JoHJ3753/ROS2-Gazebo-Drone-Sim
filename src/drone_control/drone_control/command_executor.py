@@ -44,6 +44,9 @@ class DroneCommandHandler(Protocol):
     def hover(self, duration_s: float | None) -> None:
         """현재 위치와 기수를 유지한다."""
 
+    def cancel(self) -> None:
+        """현재 수행 중인 취소 가능한 비행 동작을 중단한다."""
+
 
 _SUPPORTED_COMMAND_NAMES = frozenset(
     {
@@ -54,6 +57,7 @@ _SUPPORTED_COMMAND_NAMES = frozenset(
         "move_drone",
         "rotate_relative",
         "hover",
+        "cancel",
     }
 )
 
@@ -109,6 +113,15 @@ class CommandExecutor:
 
         if command_name == "hover":
             self._execute_hover(arguments)
+            return
+
+        if command_name == "cancel":
+            self._require_arguments(
+                arguments,
+                required=set(),
+                optional=set(),
+            )
+            self._handler.cancel()
             return
 
         # _validate_command에서 지원 여부를 확인하므로 도달할 수 없다.

@@ -48,6 +48,8 @@ COMMAND_RETRY_INTERVAL_TICKS = 10
 REQUIRED_ROS_DOMAIN_ID = 42
 MESSAGE_FRESHNESS_TIMEOUT_SECONDS = 1.0
 START_STABILITY_REQUIRED_TICKS = 20
+TAKEOFF_STABILITY_REQUIRED_TICKS = 10
+TAKEOFF_STABILITY_TIMEOUT_SECONDS = 15.0
 
 MAX_START_HORIZONTAL_SPEED_MPS = 0.15
 MAX_START_VERTICAL_SPEED_MPS = 0.10
@@ -130,17 +132,11 @@ def calculate_takeoff_target(
     )
 
 
-def is_vehicle_ready(
+def is_vehicle_takeoff_eligible(
     position: VehicleLocalPosition | None,
     status: VehicleStatus | None,
 ) -> bool:
-    """
-    기체가 안전하게 자동 제어를 시작할 수 있는지 확인한다.
-
-    VehicleLandDetected가 현재 PX4 DDS 출력에 포함되지 않으므로
-    무장 상태, 비행 시간, 위치 유효성, 속도 안정성을 조합해
-    지상 대기 상태를 보수적으로 판정한다.
-    """
+    """속도 안정화 대기를 시작할 수 있는 기본 안전 상태인지 확인한다."""
     if position is None or status is None:
         return False
 
@@ -169,7 +165,32 @@ def is_vehicle_ready(
         position.heading,
     )
 
-    if not all(math.isfinite(float(value)) for value in values):
+    return all(
+        math.isfinite(float(value))
+        for value in values
+    )
+
+
+def is_vehicle_speed_stable(
+    position: VehicleLocalPosition | None,
+) -> bool:
+    """현재 속도가 안전한 이륙 시작 범위 안인지 확인한다."""
+    if position is None:
+        return False
+
+    if not position.v_xy_valid or not position.v_z_valid:
+        return False
+
+    velocity_values = (
+        position.vx,
+        position.vy,
+        position.vz,
+    )
+
+    if not all(
+        math.isfinite(float(value))
+        for value in velocity_values
+    ):
         return False
 
     horizontal_speed_mps = math.hypot(
@@ -177,10 +198,23 @@ def is_vehicle_ready(
         float(position.vy),
     )
 
-    if horizontal_speed_mps > MAX_START_HORIZONTAL_SPEED_MPS:
-        return False
+    return (
+        horizontal_speed_mps
+        <= MAX_START_HORIZONTAL_SPEED_MPS
+        and abs(float(position.vz))
+        <= MAX_START_VERTICAL_SPEED_MPS
+    )
 
-    return abs(float(position.vz)) <= MAX_START_VERTICAL_SPEED_MPS
+
+def is_vehicle_ready(
+    position: VehicleLocalPosition | None,
+    status: VehicleStatus | None,
+) -> bool:
+    """기체의 기본 안전 상태와 순간 속도 안정성을 함께 확인한다."""
+    return (
+        is_vehicle_takeoff_eligible(position, status)
+        and is_vehicle_speed_stable(position)
+    )
 
 
 def has_reached_altitude(
@@ -294,6 +328,7 @@ class AdapterState(Enum):
 
     WAITING_FOR_READY = "waiting_for_ready"
     IDLE = "idle"
+    WAITING_FOR_TAKEOFF_STABILITY = "waiting_for_takeoff_stability"
     STREAMING_SETPOINTS = "streaming_setpoints"
     REQUESTING_OFFBOARD = "requesting_offboard"
     TAKING_OFF = "taking_off"
@@ -444,6 +479,10 @@ class Px4CommandAdapter(Node):
         self._start_reset_signature: tuple[int, int, int] | None = None
         self._start_heading_rad: float | None = None
 
+        self._pending_takeoff_altitude_m: float | None = None
+        self._takeoff_stability_counter = 0
+        self._takeoff_stability_deadline_monotonic: float | None = None
+
         # _target_position은 현재 PX4에 전송하는 목표다.
         # 이륙 중에는 수직 이륙 목표이고, 이륙 완료 후에는
         # 최종 절대좌표 목표로 교체된다.
@@ -519,7 +558,7 @@ class Px4CommandAdapter(Node):
         self._flight_status_publisher.publish(message)
 
     def takeoff(self, altitude_m: float) -> None:
-        """명령 대기 상태에서 지정한 높이로 수직 이륙을 시작한다."""
+        """이륙 요청을 저장하고 연속 속도 안정화를 기다린다."""
         if self._state is not AdapterState.IDLE:
             raise RuntimeError(
                 "Takeoff command requires the adapter to be idle"
@@ -530,27 +569,29 @@ class Px4CommandAdapter(Node):
                 "PX4 position or status message is stale"
             )
 
-        if not self._is_vehicle_ready():
+        if not is_vehicle_takeoff_eligible(
+            self._vehicle_local_position,
+            self._vehicle_status,
+        ):
             raise RuntimeError(
-                "Vehicle is not ready for takeoff"
+                "Vehicle is not eligible for takeoff"
             )
 
-        self._target_mode = TARGET_MODE_TAKEOFF
-        self._mission_target_position = None
-        self._coordinate_calculator = None
-
-        self._prepare_takeoff_target(altitude_m)
-
-        self._setpoint_stream_counter = 0
-        self._command_retry_counter = 0
-        self._state = AdapterState.STREAMING_SETPOINTS
+        self._pending_takeoff_altitude_m = altitude_m
+        self._takeoff_stability_counter = 0
+        self._takeoff_stability_deadline_monotonic = (
+            time.monotonic()
+            + TAKEOFF_STABILITY_TIMEOUT_SECONDS
+        )
+        self._state = AdapterState.WAITING_FOR_TAKEOFF_STABILITY
 
         self.get_logger().info(
-            "Takeoff command accepted: "
+            "Takeoff command accepted. "
+            "Waiting for stable vehicle speed: "
             f"altitude_m={altitude_m:.2f}"
         )
         self._publish_flight_status(
-            f"이륙 준비 중: 목표 고도 {altitude_m:.2f}m"
+            "이륙 대기 중: 속도 안정화 확인"
         )
 
     def arm(self) -> None:
@@ -843,6 +884,84 @@ class Px4CommandAdapter(Node):
             f"호버링 중: {duration_s:.2f}초"
         )
 
+    def cancel(self) -> None:
+        """진행 중인 취소 가능한 비행 동작을 중단한다."""
+        if self._state is AdapterState.WAITING_FOR_TAKEOFF_STABILITY:
+            self._pending_takeoff_altitude_m = None
+            self._takeoff_stability_counter = 0
+            self._takeoff_stability_deadline_monotonic = None
+            self._state = AdapterState.IDLE
+
+            self.get_logger().info(
+                "Pending takeoff command cancelled."
+            )
+            self._publish_flight_status(
+                "이륙 대기 취소: 다음 명령 대기"
+            )
+            return
+
+        cancellable_states = {
+            AdapterState.MOVING_TO_TARGET,
+            AdapterState.ROTATING,
+            AdapterState.HOVERING,
+        }
+
+        if self._state not in cancellable_states:
+            raise RuntimeError(
+                "Cancel command requires active movement, "
+                "rotation, or timed hover"
+            )
+
+        if not self._messages_are_fresh():
+            raise RuntimeError(
+                "PX4 position or status message is stale"
+            )
+
+        if not self._is_offboard_and_armed():
+            raise RuntimeError(
+                "Cancel command requires an armed Offboard vehicle"
+            )
+
+        position = self._vehicle_local_position
+
+        if position is None:
+            raise RuntimeError(
+                "Vehicle position is required to cancel movement"
+            )
+
+        current_position = (
+            float(position.x),
+            float(position.y),
+            float(position.z),
+        )
+        current_heading = float(position.heading)
+
+        if (
+            not position.xy_valid
+            or not position.z_valid
+            or not all(
+                math.isfinite(value)
+                for value in current_position
+            )
+            or not math.isfinite(current_heading)
+        ):
+            raise RuntimeError(
+                "Vehicle position or heading is not valid for cancellation"
+            )
+
+        self._target_position = current_position
+        self._target_yaw_rad = current_heading
+        self._hover_deadline_monotonic = None
+        self._state = AdapterState.HOLDING
+
+        self.get_logger().info(
+            "Active command cancelled. "
+            "Holding current position and yaw."
+        )
+        self._publish_flight_status(
+            "동작 취소 완료: 현재 위치에서 호버링"
+        )
+
     def _timer_callback(self) -> None:
         """안전 조건을 확인한 뒤 현재 비행 단계를 진행한다."""
         if self._state is AdapterState.ERROR:
@@ -904,6 +1023,13 @@ class Px4CommandAdapter(Node):
                     "PX4 entered failsafe. Stopping setpoint output."
                 )
                 return
+
+        if (
+            self._state
+            is AdapterState.WAITING_FOR_TAKEOFF_STABILITY
+        ):
+            self._handle_takeoff_stability_wait()
+            return
 
         controlled_states = {
             AdapterState.TAKING_OFF,
@@ -1033,6 +1159,91 @@ class Px4CommandAdapter(Node):
         return (
             self._start_stability_counter
             >= START_STABILITY_REQUIRED_TICKS
+        )
+
+    def _handle_takeoff_stability_wait(self) -> None:
+        """연속 속도 안정화가 확인되면 실제 이륙 절차를 시작한다."""
+        altitude_m = self._pending_takeoff_altitude_m
+        deadline = self._takeoff_stability_deadline_monotonic
+
+        if altitude_m is None or deadline is None:
+            self._enter_error(
+                "Pending takeoff state is incomplete."
+            )
+            return
+
+        if time.monotonic() >= deadline:
+            self._pending_takeoff_altitude_m = None
+            self._takeoff_stability_counter = 0
+            self._takeoff_stability_deadline_monotonic = None
+            self._state = AdapterState.IDLE
+
+            self.get_logger().warning(
+                "Pending takeoff timed out while "
+                "waiting for stable vehicle state."
+            )
+            self._publish_flight_status(
+                "이륙 취소: 기체 상태 안정화 시간 초과"
+            )
+            return
+
+        status = self._vehicle_status
+
+        if (
+            status is not None
+            and (
+                status.arming_state
+                != VehicleStatus.ARMING_STATE_DISARMED
+                or status.armed_time != 0
+                or status.takeoff_time != 0
+            )
+        ):
+            self._enter_error(
+                "Vehicle armed or takeoff detected "
+                "while waiting for takeoff stability."
+            )
+            return
+
+        if not is_vehicle_takeoff_eligible(
+            self._vehicle_local_position,
+            status,
+        ):
+            self._takeoff_stability_counter = 0
+            return
+
+        if not is_vehicle_speed_stable(
+            self._vehicle_local_position
+        ):
+            self._takeoff_stability_counter = 0
+            return
+
+        self._takeoff_stability_counter += 1
+
+        if (
+            self._takeoff_stability_counter
+            < TAKEOFF_STABILITY_REQUIRED_TICKS
+        ):
+            return
+
+        self._pending_takeoff_altitude_m = None
+        self._takeoff_stability_counter = 0
+        self._takeoff_stability_deadline_monotonic = None
+
+        self._target_mode = TARGET_MODE_TAKEOFF
+        self._mission_target_position = None
+        self._coordinate_calculator = None
+        self._prepare_takeoff_target(altitude_m)
+
+        self._setpoint_stream_counter = 0
+        self._command_retry_counter = 0
+        self._state = AdapterState.STREAMING_SETPOINTS
+
+        self.get_logger().info(
+            "Vehicle speed is stable. "
+            "Starting takeoff setpoint stream."
+        )
+        self._publish_flight_status(
+            f"이륙 준비 중: 목표 고도 {altitude_m:.2f}m"
         )
 
     def _find_competing_command_publishers(self) -> list[str]:
