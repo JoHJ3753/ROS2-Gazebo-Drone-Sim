@@ -7,7 +7,7 @@ from drone_command_interface.command_output_parser import (
 )
 
 
-SUPPORTED_RUNTIME_COMMANDS = frozenset({"takeoff"})
+SUPPORTED_RUNTIME_COMMANDS = frozenset({"takeoff", "land"})
 
 
 class CommandBridgeError(ValueError):

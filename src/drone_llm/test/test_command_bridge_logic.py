@@ -45,12 +45,11 @@ def test_clarification_is_not_executed() -> None:
         prepare_runtime_command(response)
 
 
-def test_unimplemented_command_is_rejected() -> None:
-    """PX4 어댑터에 아직 구현되지 않은 명령을 차단한다."""
+def test_single_land_is_accepted() -> None:
+    """실행 가능한 단일 착륙 명령을 전달한다."""
     command = {"name": "land", "arguments": {}}
 
-    with pytest.raises(CommandBridgeError, match="land"):
-        prepare_runtime_command(make_response([command]))
+    assert prepare_runtime_command(make_response([command])) == command
 
 
 def test_compound_command_is_rejected() -> None:
