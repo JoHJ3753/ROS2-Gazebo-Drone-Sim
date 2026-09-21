@@ -274,6 +274,7 @@ def test_offboard_and_armed_rejects_missing_status():
 @pytest.mark.parametrize(
     "target_mode",
     [
+        "takeoff",
         "absolute",
         "relative",
         "rotation",

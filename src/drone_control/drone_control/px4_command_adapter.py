@@ -4,6 +4,7 @@ from enum import Enum
 import math
 import os
 import time
+import json
 
 from px4_msgs.msg import OffboardControlMode
 from px4_msgs.msg import TrajectorySetpoint
@@ -16,6 +17,11 @@ from rclpy.qos import DurabilityPolicy
 from rclpy.qos import HistoryPolicy
 from rclpy.qos import QoSProfile
 from rclpy.qos import ReliabilityPolicy
+
+from std_msgs.msg import String
+
+from drone_control.command_executor import CommandExecutionError
+from drone_control.command_executor import CommandExecutor
 
 from drone_control.coordinate_calculator import CoordinateCalculationError
 from drone_control.coordinate_calculator import CoordinateCalculator
@@ -31,6 +37,8 @@ from drone_control.yaw_calculator import (
 # 이 파일의 첫 번째 버전은 Gazebo 시뮬레이션 검증용이다.
 # 실제 기체에 적용하기 전에는 별도의 안전 검증이 필요하다.
 NODE_NAME = "px4_command_adapter"
+
+VALIDATED_COMMAND_TOPIC = "/drone/validated_command"
 
 CONTROL_PERIOD_SECONDS = 0.1
 SETPOINT_STREAM_COUNT = 20
@@ -64,12 +72,14 @@ DEFAULT_TARGET_ALTITUDE_M = 2.0
 # relative:
 #   명령 실행 시점의 기체 위치와 기수 방향을 기준으로
 #   앞·뒤·왼쪽·오른쪽 등의 상대좌표를 계산하는 방식
+TARGET_MODE_TAKEOFF = "takeoff"
 TARGET_MODE_ABSOLUTE = "absolute"
 TARGET_MODE_RELATIVE = "relative"
 TARGET_MODE_ROTATION = "rotation"
 
 SUPPORTED_TARGET_MODES = frozenset(
     {
+        TARGET_MODE_TAKEOFF,
         TARGET_MODE_ABSOLUTE,
         TARGET_MODE_RELATIVE,
         TARGET_MODE_ROTATION,
@@ -240,8 +250,8 @@ def validate_target_mode(target_mode: str) -> str:
 
     if target_mode not in SUPPORTED_TARGET_MODES:
         raise ValueError(
-            "target_mode must be 'absolute', 'relative', "
-            "or 'rotation'"
+            "target_mode must be 'takeoff', 'absolute', "
+            "'relative', or 'rotation'"
         )
 
     return target_mode
@@ -269,6 +279,7 @@ class AdapterState(Enum):
     """PX4 어댑터의 비행 제어 상태를 정의한다."""
 
     WAITING_FOR_READY = "waiting_for_ready"
+    IDLE = "idle"
     STREAMING_SETPOINTS = "streaming_setpoints"
     REQUESTING_OFFBOARD = "requesting_offboard"
     TAKING_OFF = "taking_off"
@@ -391,6 +402,17 @@ class Px4CommandAdapter(Node):
             qos_profile,
         )
 
+        # 검증된 단일 명령만 실행기에 전달한다.
+        self._command_executor = CommandExecutor(self)
+
+        # LLM 출력 파서와 검증 경계를 통과한 명령을 받는다.
+        self._validated_command_subscription = self.create_subscription(
+            String,
+            VALIDATED_COMMAND_TOPIC,
+            self._validated_command_callback,
+            10,
+        )
+
         self._state = AdapterState.WAITING_FOR_READY
         self._vehicle_local_position: VehicleLocalPosition | None = None
         self._vehicle_status: VehicleStatus | None = None
@@ -444,6 +466,103 @@ class Px4CommandAdapter(Node):
         self._vehicle_status = message
         self._last_status_received_at = time.monotonic()
 
+    def _validated_command_callback(self, message: String) -> None:
+        """검증된 JSON 명령 하나를 수신해 실행기에 전달한다."""
+        self.get_logger().info(
+            "Validated command received: "
+            f"topic={VALIDATED_COMMAND_TOPIC}, "
+            f"payload={message.data}"
+        )
+
+        try:
+            command = json.loads(message.data)
+            self._command_executor.execute(command)
+        except json.JSONDecodeError as error:
+            self.get_logger().error(
+                f"Command JSON decoding failed: {error}"
+            )
+        except (CommandExecutionError, RuntimeError) as error:
+            self.get_logger().error(
+                f"Command execution rejected: {error}"
+            )
+
+    def takeoff(self, altitude_m: float) -> None:
+        """명령 대기 상태에서 지정한 높이로 수직 이륙을 시작한다."""
+        if self._state is not AdapterState.IDLE:
+            raise RuntimeError(
+                "Takeoff command requires the adapter to be idle"
+            )
+
+        if not self._messages_are_fresh():
+            raise RuntimeError(
+                "PX4 position or status message is stale"
+            )
+
+        if not self._is_vehicle_ready():
+            raise RuntimeError(
+                "Vehicle is not ready for takeoff"
+            )
+
+        self._target_mode = TARGET_MODE_TAKEOFF
+        self._mission_target_position = None
+        self._coordinate_calculator = None
+
+        self._prepare_takeoff_target(altitude_m)
+
+        self._setpoint_stream_counter = 0
+        self._command_retry_counter = 0
+        self._state = AdapterState.STREAMING_SETPOINTS
+
+        self.get_logger().info(
+            "Takeoff command accepted: "
+            f"altitude_m={altitude_m:.2f}"
+        )
+
+    def arm(self) -> None:
+        """독립 시동 명령은 아직 지원하지 않는다."""
+        raise RuntimeError(
+            "Standalone arm command is not implemented"
+        )
+
+    def disarm(self) -> None:
+        """독립 시동 해제 명령은 아직 지원하지 않는다."""
+        raise RuntimeError(
+            "Standalone disarm command is not implemented"
+        )
+
+    def land(self) -> None:
+        """런타임 착륙 명령은 다음 단계에서 구현한다."""
+        raise RuntimeError(
+            "Runtime land command is not implemented"
+        )
+
+    def move_drone(
+        self,
+        direction: str,
+        distance_m: float,
+        speed_mps: float | None,
+    ) -> None:
+        """런타임 상대이동은 다음 단계에서 구현한다."""
+        raise RuntimeError(
+            "Runtime move command is not implemented"
+        )
+
+    def rotate_relative(
+        self,
+        yaw_deg: float,
+        yaw_speed_dps: float | None,
+    ) -> None:
+        """런타임 상대회전은 다음 단계에서 구현한다."""
+        raise RuntimeError(
+            "Runtime rotation command is not implemented"
+        )
+
+    def hover(self, duration_s: float | None) -> None:
+        """런타임 호버링은 다음 단계에서 구현한다."""
+        raise RuntimeError(
+            "Runtime hover command is not implemented"
+        )
+
     def _timer_callback(self) -> None:
         """안전 조건을 확인한 뒤 현재 비행 단계를 진행한다."""
         if self._state is AdapterState.ERROR:
@@ -469,26 +588,19 @@ class Px4CommandAdapter(Node):
             if not self._update_start_safety_window():
                 return
 
-            try:
-                self._prepare_mission_targets(
-                    DEFAULT_TAKEOFF_HEIGHT_M
-                )
-            except (
-                CoordinateCalculationError,
-                RuntimeError,
-                ValueError,
-            ) as error:
-                # 잘못된 좌표가 PX4로 전달되기 전에 실행을 중단한다.
-                self._enter_error(
-                    f"Failed to prepare mission target: {error}"
-                )
-                return
-
-            self._state = AdapterState.STREAMING_SETPOINTS
+            # PX4 데이터가 안정화되어도 자동으로 이륙하지 않는다.
+            # 이후 /drone/validated_command 토픽으로 takeoff 명령을
+            # 받을 때까지 IDLE 상태에서 대기한다.
+            self._state = AdapterState.IDLE
 
             self.get_logger().info(
-                "Vehicle data is valid. Starting setpoint stream."
+                "Vehicle data is stable. "
+                "Waiting for a validated command."
             )
+            return
+
+        if self._state is AdapterState.IDLE:
+            return
 
         if not self._messages_are_fresh():
             self._enter_error(
@@ -924,6 +1036,17 @@ class Px4CommandAdapter(Node):
             return
 
         if not self._has_reached_takeoff_altitude():
+            return
+
+        # 단순 이륙 명령은 목표 고도에 도달하면 추가 이동 없이
+        # 현재 위치와 기수 방향을 유지한다.
+        if self._target_mode == TARGET_MODE_TAKEOFF:
+            self._state = AdapterState.HOLDING
+
+            self.get_logger().info(
+                "Takeoff target reached. "
+                "Holding current position and yaw."
+            )
             return
 
         try:
