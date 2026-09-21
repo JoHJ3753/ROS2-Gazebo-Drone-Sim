@@ -28,5 +28,17 @@ def generate_launch_description() -> LaunchDescription:
         name="command_bridge",
         output="screen",
     )
+    simulation_test_logger_node = Node(
+        package="drone_llm",
+        executable="simulation_test_logger",
+        name="simulation_test_logger",
+        output="screen",
+    )
 
-    return LaunchDescription([llm_service_node, command_bridge_node])
+    return LaunchDescription(
+        [
+            llm_service_node,
+            command_bridge_node,
+            simulation_test_logger_node,
+        ]
+    )

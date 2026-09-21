@@ -25,6 +25,7 @@ model/
 runs/
 outputs/
 checkpoints/
+simulation_test_outputs/
 
 # Editors and operating system
 .vscode/

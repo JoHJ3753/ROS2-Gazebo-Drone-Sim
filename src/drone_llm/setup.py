@@ -46,6 +46,10 @@ setup(
             "llm_client = drone_llm.llm_client:main",
             "command_bridge = drone_llm.command_bridge_node:main",
             "drone_cli = drone_llm.drone_cli:main",
+            (
+                "simulation_test_logger = "
+                "drone_llm.simulation_test_logger:main"
+            ),
         ],
     },
 )

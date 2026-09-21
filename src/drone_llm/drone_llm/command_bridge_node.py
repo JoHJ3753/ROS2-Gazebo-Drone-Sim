@@ -18,6 +18,7 @@ from llm_ros2.srv import AskLLM
 TEXT_COMMAND_TOPIC = "/drone/text_command"
 VALIDATED_COMMAND_TOPIC = "/drone/validated_command"
 BRIDGE_STATUS_TOPIC = "/drone/command_bridge_status"
+LLM_RAW_RESPONSE_TOPIC = "/drone/llm_raw_response"
 LLM_SERVICE_NAME = "/ask_llm"
 TOPIC_QUEUE_DEPTH = 10
 
@@ -37,6 +38,11 @@ class CommandBridgeNode(Node):
         self._status_publisher = self.create_publisher(
             String,
             BRIDGE_STATUS_TOPIC,
+            TOPIC_QUEUE_DEPTH,
+        )
+        self._llm_response_publisher = self.create_publisher(
+            String,
+            LLM_RAW_RESPONSE_TOPIC,
             TOPIC_QUEUE_DEPTH,
         )
         self._text_subscription = self.create_subscription(
@@ -106,6 +112,9 @@ class CommandBridgeNode(Node):
             return
 
         self.get_logger().info(f"LLM 출력: {response.response}")
+        raw_response_message = String()
+        raw_response_message.data = response.response
+        self._llm_response_publisher.publish(raw_response_message)
 
         try:
             command = prepare_runtime_command(response.response)

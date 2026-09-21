@@ -711,6 +711,28 @@ source install/local_setup.bash
 ros2 launch drone_llm llm_service.launch.py
 ```
 
+이 launch 파일은 LLM 서비스, 명령 브리지와 함께 시뮬레이션 테스트
+로거를 실행합니다. 로거는 실행한 위치를 기준으로 다음 파일을 만듭니다.
+
+```text
+simulation_test_outputs/YYYY-MM-DD_HHMMSS/simulation_results.jsonl
+```
+
+각 줄에는 자연어 입력, LLM 원문, 검증된 명령, 브리지 결과, PX4 상태,
+초기·목표·최종 Local NED 좌표와 실행 시간이 기록됩니다. 브리지에서
+거부되거나 실행 중 오류가 발생한 명령도 실패 단계와 사유를 남깁니다.
+`simulation_test_outputs/`는 `.gitignore`에 포함되어 Git에 올라가지
+않습니다.
+
+저장 위치와 테스트 제한 시간을 바꾸려면 launch 실행 시 파라미터를
+별도로 구성하거나 로거 노드를 다음과 같이 실행할 수 있습니다.
+
+```bash
+ros2 run drone_llm simulation_test_logger --ros-args \
+  -p output_root:=simulation_test_outputs \
+  -p test_timeout_seconds:=180.0
+```
+
 별도 터미널에서 자연어 명령을 요청할 수 있습니다.
 
 ```bash
