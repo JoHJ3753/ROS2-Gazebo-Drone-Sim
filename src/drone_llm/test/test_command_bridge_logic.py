@@ -126,6 +126,13 @@ def test_single_timed_hover_is_accepted() -> None:
     assert prepare_runtime_command(make_response([command])) == command
 
 
+def test_single_cancel_is_accepted() -> None:
+    """실행 가능한 단일 취소 명령을 전달한다."""
+    command = {"name": "cancel", "arguments": {}}
+
+    assert prepare_runtime_command(make_response([command])) == command
+
+
 def test_compound_command_is_rejected() -> None:
     """완료 확인 없이 연속 명령을 발행하지 않는다."""
     takeoff = {"name": "takeoff", "arguments": {"altitude_m": 2.0}}

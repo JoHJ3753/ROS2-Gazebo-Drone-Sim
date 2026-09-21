@@ -14,6 +14,7 @@ SUPPORTED_RUNTIME_COMMANDS = frozenset(
         "move_drone",
         "rotate_relative",
         "hover",
+        "cancel",
     }
 )
 MAX_UNAMBIGUOUS_YAW_DEG = 180.0
