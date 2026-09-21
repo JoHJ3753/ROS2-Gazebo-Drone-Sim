@@ -6,6 +6,13 @@ from std_msgs.msg import String
 
 from drone_llm.drone_cli import DroneCli
 
+from drone_llm.drone_cli import STATUS_TIMEOUT_SECONDS
+
+
+def test_status_timeout_covers_initial_cpu_inference() -> None:
+    """첫 CPU 추론이 길어져도 CLI가 결과를 기다린다."""
+    assert STATUS_TIMEOUT_SECONDS == 300.0
+
 
 def test_flight_status_is_printed(capsys) -> None:
     """PX4 어댑터 상태를 명령 입력 터미널에 출력한다."""

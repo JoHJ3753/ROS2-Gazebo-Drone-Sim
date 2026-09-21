@@ -1,6 +1,6 @@
 llm_service:
   ros__parameters:
-    model_path: "model/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
+    model_path: "model/v0.4-Q4_K_M.gguf"
     context_size: 16384
     threads: 4
     max_tokens: 256

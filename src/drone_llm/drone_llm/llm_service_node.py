@@ -12,7 +12,7 @@ from drone_command_interface.prompts import SYSTEM_PROMPT
 from llm_ros2.srv import AskLLM
 
 
-DEFAULT_MODEL_PATH = "model/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
+DEFAULT_MODEL_PATH = "model/v0.4-Q4_K_M.gguf"
 DEFAULT_CONTEXT_SIZE = 16384
 DEFAULT_THREAD_COUNT = 4
 DEFAULT_MAX_TOKENS = 256

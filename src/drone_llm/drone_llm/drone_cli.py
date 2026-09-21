@@ -13,7 +13,7 @@ from drone_llm.command_bridge_node import TEXT_COMMAND_TOPIC
 
 
 TOPIC_QUEUE_DEPTH = 10
-STATUS_TIMEOUT_SECONDS = 130.0
+STATUS_TIMEOUT_SECONDS = 300.0
 FLIGHT_STATUS_TOPIC = "/drone/flight_status"
 EXIT_COMMANDS = frozenset({"exit", "quit", "종료"})
 
