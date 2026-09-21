@@ -112,6 +112,20 @@ def test_rotation_without_guaranteed_path_is_rejected(
         prepare_runtime_command(make_response([command]))
 
 
+def test_single_hover_without_duration_is_accepted() -> None:
+    """시간이 없는 단일 호버링 명령을 전달한다."""
+    command = {"name": "hover", "arguments": {}}
+
+    assert prepare_runtime_command(make_response([command])) == command
+
+
+def test_single_timed_hover_is_accepted() -> None:
+    """시간이 지정된 단일 호버링 명령을 전달한다."""
+    command = {"name": "hover", "arguments": {"duration_s": 3.0}}
+
+    assert prepare_runtime_command(make_response([command])) == command
+
+
 def test_compound_command_is_rejected() -> None:
     """완료 확인 없이 연속 명령을 발행하지 않는다."""
     takeoff = {"name": "takeoff", "arguments": {"altitude_m": 2.0}}

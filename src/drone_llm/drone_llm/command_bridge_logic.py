@@ -8,7 +8,13 @@ from drone_command_interface.command_output_parser import (
 
 
 SUPPORTED_RUNTIME_COMMANDS = frozenset(
-    {"takeoff", "land", "move_drone", "rotate_relative"}
+    {
+        "takeoff",
+        "land",
+        "move_drone",
+        "rotate_relative",
+        "hover",
+    }
 )
 MAX_UNAMBIGUOUS_YAW_DEG = 180.0
 
