@@ -154,7 +154,7 @@ flowchart TD
     D --> E{JSON Schema 검증}
     E -->|실패| F[실행 거부 및 오류 로그]
     E -->|성공| G[명령 연결 계층]
-    G --> H[/drone/validated_command]
+    G --> H["/drone/validated_command"]
     H --> I[CommandExecutor]
     I --> J[Mission FSM]
     I --> K[Coordinate Calculator]
