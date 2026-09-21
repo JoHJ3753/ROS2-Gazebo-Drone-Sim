@@ -17,6 +17,7 @@ venv/
 .env.*
 
 # Models and training outputs
+model/
 *.pt
 *.pth
 *.ckpt
