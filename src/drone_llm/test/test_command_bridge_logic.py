@@ -52,6 +52,31 @@ def test_single_land_is_accepted() -> None:
     assert prepare_runtime_command(make_response([command])) == command
 
 
+def test_single_move_without_speed_is_accepted() -> None:
+    """방향과 거리만 있는 단일 상대이동을 전달한다."""
+    command = {
+        "name": "move_drone",
+        "arguments": {"direction": "forward", "distance_m": 1.0},
+    }
+
+    assert prepare_runtime_command(make_response([command])) == command
+
+
+def test_move_with_speed_is_rejected() -> None:
+    """속도 제어가 구현되기 전에는 명시된 속도를 무시하지 않는다."""
+    command = {
+        "name": "move_drone",
+        "arguments": {
+            "direction": "forward",
+            "distance_m": 1.0,
+            "speed_mps": 0.5,
+        },
+    }
+
+    with pytest.raises(CommandBridgeError, match="speed_mps"):
+        prepare_runtime_command(make_response([command]))
+
+
 def test_compound_command_is_rejected() -> None:
     """완료 확인 없이 연속 명령을 발행하지 않는다."""
     takeoff = {"name": "takeoff", "arguments": {"altitude_m": 2.0}}

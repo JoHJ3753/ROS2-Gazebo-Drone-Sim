@@ -7,7 +7,9 @@ from drone_command_interface.command_output_parser import (
 )
 
 
-SUPPORTED_RUNTIME_COMMANDS = frozenset({"takeoff", "land"})
+SUPPORTED_RUNTIME_COMMANDS = frozenset(
+    {"takeoff", "land", "move_drone"}
+)
 
 
 class CommandBridgeError(ValueError):
@@ -31,6 +33,14 @@ def prepare_runtime_command(raw_response: str) -> dict[str, Any]:
     if command["name"] not in SUPPORTED_RUNTIME_COMMANDS:
         raise CommandBridgeError(
             f"현재 실행할 수 없는 명령입니다: {command['name']}"
+        )
+
+    if (
+        command["name"] == "move_drone"
+        and "speed_mps" in command["arguments"]
+    ):
+        raise CommandBridgeError(
+            "이동 속도(speed_mps) 지정은 아직 지원하지 않습니다."
         )
 
     return command

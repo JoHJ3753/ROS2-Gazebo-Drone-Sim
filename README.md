@@ -741,8 +741,9 @@ PX4 어댑터로 전달됨 (실행 완료 아님): {"name": "takeoff", "argument
 
 이 명령을 실제로 받으려면 PX4 어댑터도 실행 중이어야 합니다.
 CLI의 "전달됨"은 PX4가 명령을 완료했다는 뜻이 아닙니다.
-현재 런타임에서는 단일 `takeoff`와 `land` 명령만 연결되어 있으며,
-이동 등 미구현 명령과 복합 명령은 발행하지 않습니다.
+현재 런타임에서는 단일 `takeoff`, `land`, `move_drone` 명령만 연결되어
+있습니다. `move_drone`은 방향과 거리만 지원하며, 속도(`speed_mps`)가
+포함된 요청은 무시하지 않고 거부합니다. 복합 명령도 발행하지 않습니다.
 `/drone/flight_status` 메시지는 PX4 어댑터의 상태 전환에 따라
 CLI와 ROS 로그에 표시됩니다. 표시 예시는 실제 비행 검증 결과가 아닙니다.
 
@@ -1052,11 +1053,11 @@ Summary: 14615 tests, 0 errors, 0 failures, 4733 skipped
 - [x] 검증된 명령을 비행 함수로 전달하는 CommandExecutor 구현
 - [x] PX4 자동 이륙을 검증된 런타임 명령 방식으로 변경
 - [x] JSON 기반 `takeoff` 명령 시뮬레이션 검증
-- [ ] JSON 기반 `move_drone` 런타임 연결
+- [x] JSON 기반 `move_drone` 런타임 연결 (속도 지정 제외)
 - [ ] JSON 기반 `rotate_relative` 런타임 연결
 - [ ] JSON 기반 `hover` 런타임 연결
-- [ ] JSON 기반 `land` 및 자동 Disarm 처리
-- [ ] LLM 검증 결과와 런타임 명령 토픽 연결
+- [x] JSON 기반 `land` 및 자동 Disarm 처리
+- [x] LLM 검증 결과와 런타임 명령 토픽 연결
 - [ ] Mission FSM과 PX4 실행 결과 연결
 - [ ] 자연어 명령의 종단 간 시뮬레이션 검증
 - [ ] 복합 명령 순차 실행
