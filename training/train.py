@@ -14,6 +14,7 @@ import torch
 from datasets import Dataset
 from datasets import load_dataset
 from peft import LoraConfig
+from peft import PeftModel
 from peft import get_peft_model
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
@@ -96,6 +97,12 @@ def parse_arguments() -> argparse.Namespace:
         description="Qwen2.5 드론 명령 LoRA 학습",
     )
     parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
+    parser.add_argument(
+        "--initial-adapter-path",
+        type=Path,
+        default=None,
+        help="이어서 학습할 기존 LoRA 어댑터 경로",
+    )
     parser.add_argument(
         "--dataset-dir",
         type=Path,
@@ -267,6 +274,37 @@ def load_base_model(model_name: str) -> tuple[Any, Any]:
     return model, tokenizer
 
 
+def validate_initial_adapter_path(adapter_path: Path) -> None:
+    """기존 LoRA 어댑터의 필수 파일을 확인한다."""
+    if not adapter_path.is_dir():
+        raise FileNotFoundError(
+            f"LoRA 어댑터 폴더를 찾을 수 없습니다: {adapter_path}"
+        )
+
+    required_files = (
+        "adapter_config.json",
+        "adapter_model.safetensors",
+    )
+    for file_name in required_files:
+        file_path = adapter_path / file_name
+        if not file_path.is_file():
+            raise FileNotFoundError(
+                f"LoRA 어댑터 파일을 찾을 수 없습니다: {file_path}"
+            )
+
+
+def load_initial_adapter(base_model: Any, adapter_path: Path) -> Any:
+    """기존 LoRA 어댑터를 학습 가능한 상태로 연결한다."""
+    validate_initial_adapter_path(adapter_path)
+    model = PeftModel.from_pretrained(
+        base_model,
+        str(adapter_path),
+        is_trainable=True,
+    )
+    model.print_trainable_parameters()
+    return model
+
+
 def build_training_arguments(
     arguments: argparse.Namespace,
     run_directory: Path,
@@ -303,6 +341,11 @@ def build_training_arguments(
 def main() -> None:
     """기준 평가, LoRA 학습, 사후 평가와 보고서 생성을 실행한다."""
     arguments = parse_arguments()
+    initial_adapter_path = arguments.initial_adapter_path
+    if initial_adapter_path is not None:
+        initial_adapter_path = initial_adapter_path.expanduser().resolve()
+        validate_initial_adapter_path(initial_adapter_path)
+
     run_directory = build_run_directory(arguments.output_root)
     logger = configure_experiment_logger(
         run_directory / "training_log.txt"
@@ -326,6 +369,11 @@ def main() -> None:
 
     training_config = {
         "base_model": arguments.model_name,
+        "initial_adapter": (
+            str(initial_adapter_path)
+            if initial_adapter_path is not None
+            else None
+        ),
         "epochs": arguments.epochs,
         "learning_rate": arguments.learning_rate,
         "batch_size": arguments.batch_size,
@@ -351,6 +399,9 @@ def main() -> None:
 
     logger.info("원본 Qwen 모델을 로드합니다.")
     model, tokenizer = load_base_model(arguments.model_name)
+    if initial_adapter_path is not None:
+        logger.info("기존 LoRA 어댑터를 연결합니다: %s", initial_adapter_path)
+        model = load_initial_adapter(model, initial_adapter_path)
 
     baseline_records = []
     baseline_metrics = _empty_metrics(test_samples)
@@ -380,16 +431,17 @@ def main() -> None:
         arguments.max_sequence_length,
     )
 
-    lora_config = LoraConfig(
-        r=LORA_RANK,
-        lora_alpha=LORA_ALPHA,
-        lora_dropout=LORA_DROPOUT,
-        target_modules=LORA_TARGET_MODULES,
-        bias="none",
-        task_type="CAUSAL_LM",
-    )
-    model = get_peft_model(model, lora_config)
-    model.print_trainable_parameters()
+    if initial_adapter_path is None:
+        lora_config = LoraConfig(
+            r=LORA_RANK,
+            lora_alpha=LORA_ALPHA,
+            lora_dropout=LORA_DROPOUT,
+            target_modules=LORA_TARGET_MODULES,
+            bias="none",
+            task_type="CAUSAL_LM",
+        )
+        model = get_peft_model(model, lora_config)
+        model.print_trainable_parameters()
 
     data_collator = DataCollatorForSeq2Seq(
         tokenizer=tokenizer,
@@ -444,6 +496,11 @@ def main() -> None:
             "실험 ID": run_directory.name,
             "Git Commit": environment_info["git_commit"],
             "Base Model": arguments.model_name,
+            "Initial Adapter": (
+                str(initial_adapter_path)
+                if initial_adapter_path is not None
+                else "None (base model)"
+            ),
             "Dataset": arguments.dataset_dir.name,
             "Train / Validation / Test": (
                 f"{len(train_dataset)} / "
