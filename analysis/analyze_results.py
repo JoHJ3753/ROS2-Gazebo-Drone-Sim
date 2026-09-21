@@ -1,4 +1,4 @@
-"""파인튜닝 버전별 평가 결과를 CSV, 그래프, 요약 보고서로 변환한다."""
+"""파인튜닝 결과를 CSV, 그래프, 요약 보고서로 변환한다."""
 
 import argparse
 import csv
@@ -32,6 +32,15 @@ CORE_METRICS = (
     "parameter_match",
     "exact_match",
 )
+PRESENTATION_COLORS = {
+    "baseline": "#9CA3AF",
+    "fine_tuned": "#2563EB",
+    "json_parse": "#2563EB",
+    "command_match": "#059669",
+    "parameter_match": "#D97706",
+    "exact_match": "#7C3AED",
+}
+LOSS_MOVING_AVERAGE_WINDOW = 5
 FAILURE_ORDER = (
     "json_parse_failure",
     "schema_failure",
@@ -556,6 +565,47 @@ def save_figure(plt: Any, path: Path) -> None:
     plt.close()
 
 
+def sorted_versions(versions: Iterable[str]) -> list[str]:
+    """버전 문자열을 숫자 버전 순서로 정렬한다."""
+    return sorted(
+        versions,
+        key=lambda item: version_sort_key(Path(f"test_result_{item}")),
+    )
+
+
+def draw_accuracy_bars(
+    axis: Any,
+    rows: list[dict[str, Any]],
+    title: str,
+) -> None:
+    """한 시험셋 그룹의 정확도 막대를 그린다."""
+    rows = sorted(
+        rows,
+        key=lambda row: version_sort_key(
+            Path(f"test_result_{row['version']}")
+        ),
+    )
+    positions = list(range(len(rows)))
+    width = 0.19
+    for index, metric_name in enumerate(CORE_METRICS):
+        offsets = [
+            position + (index - 1.5) * width
+            for position in positions
+        ]
+        bars = axis.bar(
+            offsets,
+            [row[metric_name] for row in rows],
+            width,
+            label=METRIC_LABELS[metric_name],
+            color=PRESENTATION_COLORS[metric_name],
+        )
+        axis.bar_label(bars, fmt="%.0f", padding=2, fontsize=8)
+    axis.set_title(title, pad=14)
+    axis.set_xticks(positions, [row["version"] for row in rows])
+    axis.set_ylim(0, 110)
+    axis.grid(axis="y", alpha=0.18)
+
+
 def chart_overall_accuracy(
     plt: Any,
     metric_rows: list[dict[str, Any]],
@@ -563,40 +613,36 @@ def chart_overall_accuracy(
 ) -> None:
     """파인튜닝 후 핵심 정확도를 버전별 막대그래프로 그린다."""
     rows = [row for row in metric_rows if row["phase"] == "fine_tuned"]
-    versions = [row["version"] for row in rows]
-    positions = list(range(len(versions)))
-    width = 0.19
-    colors = ("#2563EB", "#059669", "#D97706", "#7C3AED")
-    figure, axis = plt.subplots(figsize=(11, 6.2))
-    del figure
-    for index, (metric_name, color) in enumerate(zip(CORE_METRICS, colors)):
-        offsets = [
-            position + (index - 1.5) * width
-            for position in positions
-        ]
-        values = [row[metric_name] for row in rows]
-        bars = axis.bar(
-            offsets,
-            values,
-            width,
-            label=METRIC_LABELS[metric_name],
-            color=color,
-        )
-        axis.bar_label(bars, fmt="%.0f", padding=2, fontsize=8)
-    axis.set_title("버전별 파인튜닝 후 정확도", pad=42)
-    axis.set_ylabel("정확도 (%)")
-    axis.set_xticks(positions, versions)
-    axis.set_ylim(0, 110)
-    axis.grid(axis="y", alpha=0.2)
-    axis.legend(ncols=4, loc="upper center", bbox_to_anchor=(0.5, 1.06))
-    axis.text(
-        0.99,
-        -0.16,
-        "v0.1~v0.4는 동일 시험셋, v0.5는 별도 시험셋",
-        transform=axis.transAxes,
-        ha="right",
-        fontsize=9,
-        color="#6B7280",
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        groups[row["benchmark_id"]].append(row)
+    ordered_groups = sorted(
+        groups.values(),
+        key=lambda group: (-len(group), group[0]["version"]),
+    )
+    figure, axes = plt.subplots(
+        1,
+        len(ordered_groups),
+        figsize=(13.5, 6.2),
+        sharey=True,
+        gridspec_kw={
+            "width_ratios": [max(1.4, len(group)) for group in ordered_groups]
+        },
+    )
+    if len(ordered_groups) == 1:
+        axes = [axes]
+    for index, (axis, group) in enumerate(zip(axes, ordered_groups)):
+        title = "동일 시험셋 비교" if index == 0 else "별도 시험셋"
+        draw_accuracy_bars(axis, group, title)
+    axes[0].set_ylabel("정확도 (%)")
+    handles, labels = axes[0].get_legend_handles_labels()
+    figure.suptitle("버전별 파인튜닝 후 정확도", fontsize=16, y=1.02)
+    figure.legend(
+        handles,
+        labels,
+        ncols=4,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.98),
     )
     save_figure(plt, path)
 
@@ -612,40 +658,47 @@ def chart_improvements(
         "parameter_match",
         "exact_match",
     )
-    versions = sorted(
-        {row["version"] for row in improvement_rows},
-        key=lambda item: version_sort_key(Path(f"test_result_{item}")),
-    )
+    versions = sorted_versions({row["version"] for row in improvement_rows})
     lookup = {
-        (row["version"], row["metric"]): row[
-            "improvement_percentage_points"
-        ]
+        (row["version"], row["metric"]): row
         for row in improvement_rows
     }
+    figure, axes = plt.subplots(1, 3, figsize=(14.5, 6.2), sharey=True)
     positions = list(range(len(versions)))
-    width = 0.24
-    colors = ("#059669", "#D97706", "#7C3AED")
-    figure, axis = plt.subplots(figsize=(10.5, 6.0))
-    del figure
-    for index, (metric_name, color) in enumerate(
-        zip(selected_metrics, colors)
-    ):
-        offsets = [position + (index - 1) * width for position in positions]
-        values = [lookup[(version, metric_name)] for version in versions]
-        bars = axis.bar(
-            offsets,
-            values,
-            width,
-            label=METRIC_LABELS[metric_name],
-            color=color,
+    for axis, metric_name in zip(axes, selected_metrics):
+        baseline = [lookup[(version, metric_name)]["baseline"] for version in versions]
+        fine_tuned = [
+            lookup[(version, metric_name)]["fine_tuned"] for version in versions
+        ]
+        for position, start, end in zip(positions, baseline, fine_tuned):
+            axis.plot([start, end], [position, position], color="#CBD5E1")
+        axis.scatter(
+            baseline,
+            positions,
+            color=PRESENTATION_COLORS["baseline"],
+            s=55,
+            label="파인튜닝 전",
+            zorder=3,
         )
-        axis.bar_label(bars, fmt="%+.0f", padding=2, fontsize=9)
-    axis.axhline(0, color="#6B7280", linewidth=0.8)
-    axis.set_title("파인튜닝 전후 정확도 개선 폭", pad=42)
-    axis.set_ylabel("개선 폭 (%p)")
-    axis.set_xticks(positions, versions)
-    axis.grid(axis="y", alpha=0.2)
-    axis.legend(ncols=3, loc="upper center", bbox_to_anchor=(0.5, 1.06))
+        axis.scatter(
+            fine_tuned,
+            positions,
+            color=PRESENTATION_COLORS[metric_name],
+            s=65,
+            label="파인튜닝 후",
+            zorder=3,
+        )
+        for position, start, end in zip(positions, baseline, fine_tuned):
+            axis.text(start - 2, position, f"{start:.0f}", ha="right", va="center")
+            axis.text(end + 2, position, f"{end:.0f}", ha="left", va="center")
+        axis.set_title(METRIC_LABELS[metric_name])
+        axis.set_xlim(-8, 108)
+        axis.set_xlabel("정확도 (%)")
+        axis.grid(axis="x", alpha=0.18)
+    axes[0].set_yticks(positions, versions)
+    axes[0].invert_yaxis()
+    figure.suptitle("파인튜닝 전후 정확도 변화", fontsize=16, y=1.02)
+    axes[-1].legend(loc="lower right")
     save_figure(plt, path)
 
 
@@ -656,30 +709,44 @@ def chart_command_accuracy(
 ) -> None:
     """파인튜닝 후 명령별 명령 적중률을 히트맵으로 그린다."""
     rows = [row for row in command_rows if row["phase"] == "fine_tuned"]
-    versions = sorted(
-        {row["version"] for row in rows},
-        key=lambda item: version_sort_key(Path(f"test_result_{item}")),
-    )
+    versions = sorted_versions({row["version"] for row in rows})
     commands = sorted({row["command"] for row in rows})
     lookup = {
-        (row["command"], row["version"]): row["command_match"]
+        (row["command"], row["version"]): row
         for row in rows
     }
     matrix = [
-        [lookup.get((command, version), float("nan")) for version in versions]
+        [
+            lookup.get((command, version), {}).get(
+                "command_match",
+                float("nan"),
+            )
+            for version in versions
+        ]
         for command in commands
     ]
     figure, axis = plt.subplots(
         figsize=(max(8.5, len(versions) * 1.4), max(6.0, len(commands) * 0.5))
     )
-    image = axis.imshow(matrix, cmap="YlGnBu", vmin=0, vmax=100, aspect="auto")
+    color_map = plt.colormaps["YlGnBu"].copy()
+    color_map.set_bad("#E5E7EB")
+    image = axis.imshow(
+        matrix,
+        cmap=color_map,
+        vmin=0,
+        vmax=100,
+        aspect="auto",
+    )
     axis.set_title("명령별 파인튜닝 후 명령 적중률")
     axis.set_xticks(range(len(versions)), versions)
     axis.set_yticks(range(len(commands)), commands)
     for row_index, command in enumerate(commands):
         for column_index, version in enumerate(versions):
-            value = lookup.get((command, version))
-            label = "-" if value is None else f"{value:.0f}"
+            row = lookup.get((command, version))
+            value = None if row is None else row["command_match"]
+            label = "표본 없음" if row is None else (
+                f"{value:.0f}%\n(n={row['samples']})"
+            )
             color = "white" if value is not None and value >= 65 else "#111827"
             axis.text(
                 column_index,
@@ -702,10 +769,7 @@ def chart_failure_distribution(
 ) -> None:
     """파인튜닝 후 실패 원인과 성공 건수를 누적 막대로 그린다."""
     rows = [row for row in failure_rows if row["phase"] == "fine_tuned"]
-    versions = sorted(
-        {row["version"] for row in rows},
-        key=lambda item: version_sort_key(Path(f"test_result_{item}")),
-    )
+    versions = sorted_versions({row["version"] for row in rows})
     counts: dict[str, Counter[str]] = defaultdict(Counter)
     for row in rows:
         counts[row["version"]][row["failure_type"]] += 1
@@ -720,19 +784,32 @@ def chart_failure_distribution(
     }
     figure, axis = plt.subplots(figsize=(10.5, 6.2))
     del figure
-    bottoms = [0] * len(versions)
+    totals = [sum(counts[version].values()) for version in versions]
+    bottoms = [0.0] * len(versions)
     for failure_type in FAILURE_ORDER:
-        values = [counts[version][failure_type] for version in versions]
-        axis.bar(
+        values = [
+            counts[version][failure_type] / total * 100
+            for version, total in zip(versions, totals)
+        ]
+        bars = axis.bar(
             versions,
             values,
             bottom=bottoms,
             label=FAILURE_LABELS[failure_type],
             color=colors[failure_type],
         )
+        labels = [f"{value:.0f}%" if value >= 8 else "" for value in values]
+        axis.bar_label(
+            bars,
+            labels=labels,
+            label_type="center",
+            fontsize=8,
+            color="white",
+        )
         bottoms = [bottom + value for bottom, value in zip(bottoms, values)]
-    axis.set_title("파인튜닝 후 결과와 최초 실패 원인")
-    axis.set_ylabel("샘플 수")
+    axis.set_title("파인튜닝 후 성공 및 실패 원인 비율")
+    axis.set_ylabel("비율 (%)")
+    axis.set_ylim(0, 100)
     axis.grid(axis="y", alpha=0.2)
     axis.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0))
     save_figure(plt, path)
@@ -755,13 +832,15 @@ def chart_training_loss(
         key=lambda item: version_sort_key(Path(f"test_result_{item}")),
     ):
         values = sorted(grouped[version], key=lambda row: row["step"])
-        axis.plot(
-            [row["step"] for row in values],
-            [row["loss"] for row in values],
-            label=version,
-            linewidth=1.6,
-            alpha=0.9,
-        )
+        steps = [row["step"] for row in values]
+        losses = [row["loss"] for row in values]
+        moving_average = [
+            sum(losses[max(0, index - LOSS_MOVING_AVERAGE_WINDOW + 1):index + 1])
+            / min(index + 1, LOSS_MOVING_AVERAGE_WINDOW)
+            for index in range(len(losses))
+        ]
+        line = axis.plot(steps, moving_average, label=version, linewidth=2.2)[0]
+        axis.plot(steps, losses, color=line.get_color(), alpha=0.18, linewidth=1.0)
     axis.set_title("버전별 학습 Loss")
     axis.set_xlabel("Trainer Step")
     axis.set_ylabel("Loss")
@@ -770,17 +849,48 @@ def chart_training_loss(
     save_figure(plt, path)
 
 
-def chart_eval_loss(
+def chart_final_eval_loss(
+    plt: Any,
+    metadata_rows: list[dict[str, Any]],
+    path: Path,
+) -> None:
+    """버전별 최종 Validation Loss를 막대그래프로 그린다."""
+    rows = sorted(
+        metadata_rows,
+        key=lambda row: version_sort_key(Path(f"test_result_{row['version']}")),
+    )
+    figure, axis = plt.subplots(figsize=(9.5, 5.8))
+    bars = axis.bar(
+        [row["version"] for row in rows],
+        [float(row["final_eval_loss"]) for row in rows],
+        color=PRESENTATION_COLORS["fine_tuned"],
+        width=0.62,
+    )
+    axis.bar_label(bars, fmt="%.4f", padding=4, fontsize=9)
+    axis.set_title("버전별 최종 Validation Loss")
+    axis.set_ylabel("Final Eval Loss")
+    axis.grid(axis="y", alpha=0.18)
+    save_figure(plt, path)
+
+
+def chart_eval_loss_by_epoch(
     plt: Any,
     training_rows: list[dict[str, Any]],
     path: Path,
 ) -> None:
-    """버전별 Epoch Validation Loss를 선그래프로 그린다."""
+    """2개 이상의 평가점이 있는 버전의 Epoch별 Loss를 그린다."""
     rows = [row for row in training_rows if row["event_type"] == "validation"]
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         grouped[row["version"]].append(row)
-    figure, axis = plt.subplots(figsize=(10, 5.8))
+    grouped = {
+        version: values
+        for version, values in grouped.items()
+        if len(values) > 1
+    }
+    if not grouped:
+        return
+    figure, axis = plt.subplots(figsize=(9.5, 5.8))
     del figure
     for version in sorted(
         grouped,
@@ -794,12 +904,60 @@ def chart_eval_loss(
             label=version,
             linewidth=1.8,
         )
-    axis.set_title("Epoch별 Validation Loss")
+    axis.set_title("다중 Epoch 버전의 Validation Loss 변화")
     axis.set_xlabel("Epoch")
     axis.set_ylabel("Eval Loss")
     axis.grid(alpha=0.2)
     axis.legend(ncols=3)
     save_figure(plt, path)
+
+
+def build_version_summary(
+    metric_rows: list[dict[str, Any]],
+    metadata_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """버전별 핵심 학습·평가 정보를 한 행으로 결합한다."""
+    fine_tuned = {
+        row["version"]: row
+        for row in metric_rows
+        if row["phase"] == "fine_tuned"
+    }
+    benchmark_labels: dict[str, str] = {}
+    rows = []
+    for metadata in sorted(
+        metadata_rows,
+        key=lambda row: version_sort_key(
+            Path(f"test_result_{row['version']}")
+        ),
+    ):
+        version = metadata["version"]
+        metrics = fine_tuned.get(version)
+        if metrics is None:
+            continue
+        benchmark_id = metrics["benchmark_id"]
+        if benchmark_id not in benchmark_labels:
+            group_index = len(benchmark_labels)
+            benchmark_labels[benchmark_id] = (
+                f"test_group_{chr(ord('A') + group_index)}"
+            )
+        rows.append(
+            {
+                "version": version,
+                "benchmark_id": benchmark_id,
+                "comparison_group": benchmark_labels[benchmark_id],
+                "training_source": metadata.get("training_source", ""),
+                "dataset": metadata.get("dataset", ""),
+                "train_samples": metadata.get("train_samples", ""),
+                "epochs": metadata.get("epochs", ""),
+                "learning_rate": metadata.get("learning_rate", ""),
+                "command_accuracy": metrics["command_match"],
+                "parameter_accuracy": metrics["parameter_match"],
+                "exact_accuracy": metrics["exact_match"],
+                "train_loss": metadata.get("train_loss", ""),
+                "eval_loss": metadata.get("final_eval_loss", ""),
+            }
+        )
+    return rows
 
 
 def write_summary(
@@ -832,7 +990,8 @@ def write_summary(
             f"- 시험셋 {benchmark_id}: {', '.join(versions)}"
         )
     lines.append(
-        "- 시험셋 식별자가 다른 버전의 절대 정확도는 직접 순위 비교하지 않는다."
+        "- 시험셋 식별자가 다른 버전의 절대 정확도는 "
+        "직접 순위 비교하지 않는다."
     )
     continued_versions = [
         row["version"]
@@ -841,7 +1000,8 @@ def write_summary(
     ]
     if continued_versions:
         lines.append(
-            "- 이어 학습 버전의 baseline은 원본 모델이 아니라 초기 어댑터 "
+            "- 이어 학습 버전의 baseline은 원본 모델이 아니라 "
+            "초기 어댑터 "
             f"성능이다: {', '.join(continued_versions)}"
         )
 
@@ -924,7 +1084,9 @@ def write_summary(
             key=lambda row: (row["command_match"], row["command"]),
         )[:3]
         if not weak_rows:
-            lines.append(f"- {version}: 평가된 명령 이름을 모두 적중했다.")
+            lines.append(
+                f"- {version}: 평가된 명령 이름을 모두 적중했다."
+            )
             continue
         descriptions = [
             f"{row['command']} {row['command_match']:.2f}% "
@@ -951,11 +1113,15 @@ def write_summary(
         [
             "",
             "[해석 주의사항]",
-            "- 전체 parameter_match에는 실행 명령이 비어 있는 거부 응답도 포함된다.",
-            "- 명령별 CSV는 기대 명령이 있는 accepted 샘플만 별도로 집계한다.",
+            "- 전체 parameter_match에는 실행 명령이 비어 있는 "
+            "거부 응답도 포함된다.",
+            "- 명령별 CSV는 기대 명령이 있는 accepted 샘플만 "
+            "별도로 집계한다.",
             "- 복합 명령 샘플은 포함된 각 명령의 통계에 귀속된다.",
-            "- 명령별 샘플 수가 적으므로 0% 또는 100%를 일반화하지 않는다.",
-            "- v0.6 결과 폴더를 test_result 아래에 추가하고 스크립트를 다시 실행하면 자동 반영된다.",
+            "- 명령별 샘플 수가 적으므로 0% 또는 100%를 "
+            "일반화하지 않는다.",
+            "- v0.6 결과 폴더를 test_result 아래에 추가하고 "
+            "스크립트를 다시 실행하면 자동 반영된다.",
         ]
     )
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -988,6 +1154,10 @@ def main() -> None:
     metadata_rows = collect_experiment_metadata(
         result_directories,
         training_rows,
+    )
+    version_summary_rows = build_version_summary(
+        metric_rows,
+        metadata_rows,
     )
 
     write_csv(
@@ -1091,6 +1261,25 @@ def main() -> None:
         ],
         metadata_rows,
     )
+    write_csv(
+        csv_directory / "version_summary.csv",
+        [
+            "version",
+            "benchmark_id",
+            "comparison_group",
+            "training_source",
+            "dataset",
+            "train_samples",
+            "epochs",
+            "learning_rate",
+            "command_accuracy",
+            "parameter_accuracy",
+            "exact_accuracy",
+            "train_loss",
+            "eval_loss",
+        ],
+        version_summary_rows,
+    )
 
     plt = configure_matplotlib()
     chart_overall_accuracy(
@@ -1118,10 +1307,15 @@ def main() -> None:
         training_rows,
         figure_directory / "training_loss.png",
     )
-    chart_eval_loss(
+    chart_final_eval_loss(
+        plt,
+        metadata_rows,
+        figure_directory / "eval_loss.png",
+    )
+    chart_eval_loss_by_epoch(
         plt,
         training_rows,
-        figure_directory / "eval_loss.png",
+        figure_directory / "eval_loss_by_epoch.png",
     )
     write_summary(
         report_directory / "analysis_summary.txt",
