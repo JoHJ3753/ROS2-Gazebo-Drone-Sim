@@ -9,6 +9,7 @@ from drone_control.px4_command_adapter import calculate_takeoff_target
 from drone_control.px4_command_adapter import has_reached_altitude
 from drone_control.px4_command_adapter import has_reached_position
 from drone_control.px4_command_adapter import is_offboard_and_armed
+from drone_control.px4_command_adapter import is_vehicle_disarmed
 from drone_control.px4_command_adapter import is_vehicle_ready
 from drone_control.px4_command_adapter import validate_target_mode
 
@@ -265,6 +266,34 @@ def test_offboard_and_armed_rejects_missing_status():
     """기체 상태 메시지가 없으면 비행 가능 상태가 아니다."""
     assert not is_offboard_and_armed(None)
 
+
+@pytest.mark.parametrize(
+    ("arming_state", "expected"),
+    [
+        (
+            VehicleStatus.ARMING_STATE_DISARMED,
+            True,
+        ),
+        (
+            VehicleStatus.ARMING_STATE_ARMED,
+            False,
+        ),
+    ],
+)
+def test_vehicle_disarmed_uses_arming_state(
+    arming_state,
+    expected,
+):
+    """PX4 시동 상태를 이용해 착륙 완료 여부를 판정한다."""
+    status = VehicleStatus()
+    status.arming_state = arming_state
+
+    assert is_vehicle_disarmed(status) is expected
+
+
+def test_vehicle_disarmed_rejects_missing_status():
+    """PX4 상태 메시지가 없으면 시동 해제로 판정하지 않는다."""
+    assert not is_vehicle_disarmed(None)
 
 # ============================================================
 # 목표좌표 계산 모드 검사

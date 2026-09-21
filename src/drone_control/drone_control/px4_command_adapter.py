@@ -275,6 +275,19 @@ def is_offboard_and_armed(
     return is_offboard and is_armed
 
 
+def is_vehicle_disarmed(
+    status: VehicleStatus | None,
+) -> bool:
+    """PX4 상태가 정상적인 시동 해제 상태인지 확인한다."""
+    if status is None:
+        return False
+
+    return (
+        status.arming_state
+        == VehicleStatus.ARMING_STATE_DISARMED
+    )
+
+
 class AdapterState(Enum):
     """PX4 어댑터의 비행 제어 상태를 정의한다."""
 
@@ -286,6 +299,8 @@ class AdapterState(Enum):
     MOVING_TO_TARGET = "moving_to_target"
     ROTATING = "rotating"
     HOLDING = "holding"
+    LANDING = "landing"
+    LANDED = "landed"
     ERROR = "error"
 
 
@@ -531,9 +546,30 @@ class Px4CommandAdapter(Node):
         )
 
     def land(self) -> None:
-        """런타임 착륙 명령은 다음 단계에서 구현한다."""
-        raise RuntimeError(
-            "Runtime land command is not implemented"
+        """호버링 상태에서 PX4 자동 착륙을 요청한다."""
+        if self._state is not AdapterState.HOLDING:
+            raise RuntimeError(
+                "Land command requires the adapter to be holding"
+            )
+
+        if not self._messages_are_fresh():
+            raise RuntimeError(
+                "PX4 position or status message is stale"
+            )
+
+        if not self._is_offboard_and_armed():
+            raise RuntimeError(
+                "Land command requires an armed Offboard vehicle"
+            )
+
+        # 첫 번째 착륙 명령은 수신 즉시 발행한다.
+        self._request_land()
+        self._command_retry_counter = 0
+        self._state = AdapterState.LANDING
+
+        self.get_logger().info(
+            "Land command accepted. "
+            "Waiting for PX4 landing and disarm."
         )
 
     def move_drone(
@@ -599,13 +635,22 @@ class Px4CommandAdapter(Node):
             )
             return
 
-        if self._state is AdapterState.IDLE:
+        if self._state in {
+            AdapterState.IDLE,
+            AdapterState.LANDED,
+        }:
             return
 
         if not self._messages_are_fresh():
             self._enter_error(
                 "PX4 position or status message became stale."
             )
+            return
+
+        # 착륙 중에는 Offboard와 Armed 상태가 해제되는 것이
+        # 정상적인 상태 전환이므로 일반 비행 오류 검사보다 먼저 처리한다.
+        if self._state is AdapterState.LANDING:
+            self._handle_landing()
             return
 
         if self._vehicle_status is not None:
@@ -1190,6 +1235,48 @@ class Px4CommandAdapter(Node):
             "Offboard mode or armed state was lost while holding."
         )
 
+    def _handle_landing(self) -> None:
+        """PX4 착륙 진행 상태를 감시하고 Disarm 완료를 확인한다."""
+        status = self._vehicle_status
+
+        if status is None:
+            return
+
+        if is_vehicle_disarmed(status):
+            self._target_position = None
+            self._mission_target_position = None
+            self._coordinate_calculator = None
+            self._command_retry_counter = 0
+            self._state = AdapterState.LANDED
+
+            self.get_logger().info(
+                "Landing completed. Vehicle is disarmed."
+            )
+            return
+
+        # PX4가 착륙 명령을 처리하기 전까지 여전히 Offboard라면
+        # Offboard 소실로 인한 급격한 Failsafe 전환을 막기 위해
+        # 기존 위치 세트포인트를 계속 발행한다.
+        if (
+            status.nav_state
+            == VehicleStatus.NAVIGATION_STATE_OFFBOARD
+        ):
+            self._publish_offboard_control_mode()
+            self._publish_target_position()
+
+        self._command_retry_counter += 1
+
+        if (
+            self._command_retry_counter
+            < COMMAND_RETRY_INTERVAL_TICKS
+        ):
+            return
+
+        # UDP에서 첫 착륙 명령이 유실될 가능성에 대비해
+        # Disarm 완료 전까지 1초 간격으로 착륙을 다시 요청한다.
+        self._request_land()
+        self._command_retry_counter = 0
+
     def _has_reached_takeoff_altitude(self) -> bool:
         """현재 고도가 목표 고도 허용 오차 안인지 확인한다."""
         position = self._vehicle_local_position
@@ -1259,6 +1346,16 @@ class Px4CommandAdapter(Node):
 
         self.get_logger().info(
             "Requested Offboard mode and vehicle arm."
+        )
+
+    def _request_land(self) -> None:
+        """PX4에 현재 위치 자동 착륙을 요청한다."""
+        self._publish_vehicle_command(
+            command=VehicleCommand.VEHICLE_CMD_NAV_LAND,
+        )
+
+        self.get_logger().info(
+            "Requested PX4 automatic landing."
         )
 
     def _publish_offboard_control_mode(self) -> None:
