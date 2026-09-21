@@ -300,6 +300,7 @@ class AdapterState(Enum):
     MOVING_TO_TARGET = "moving_to_target"
     ROTATING = "rotating"
     HOLDING = "holding"
+    HOVERING = "hovering"
     LANDING = "landing"
     LANDED = "landed"
     ERROR = "error"
@@ -458,6 +459,8 @@ class Px4CommandAdapter(Node):
         self._coordinate_calculator: CoordinateCalculator | None = None
 
         self._target_yaw_rad = 0.0
+
+        self._hover_deadline_monotonic: float | None = None
 
         self._setpoint_stream_counter = 0
         self._command_retry_counter = 0
@@ -794,9 +797,50 @@ class Px4CommandAdapter(Node):
         self._publish_flight_status("회전 중: 목표 방향으로 기수 변경")
 
     def hover(self, duration_s: float | None) -> None:
-        """런타임 호버링은 다음 단계에서 구현한다."""
-        raise RuntimeError(
-            "Runtime hover command is not implemented"
+        """현재 위치와 기수를 지정 시간 동안 유지한다."""
+        if self._state is not AdapterState.HOLDING:
+            raise RuntimeError(
+                "Hover command requires the adapter to be holding"
+            )
+
+        if not self._messages_are_fresh():
+            raise RuntimeError(
+                "PX4 position or status message is stale"
+            )
+
+        if not self._is_offboard_and_armed():
+            raise RuntimeError(
+                "Hover command requires an armed Offboard vehicle"
+            )
+
+        if self._target_position is None:
+            raise RuntimeError(
+                "Holding target is required to hover"
+            )
+
+        if duration_s is None:
+            self._hover_deadline_monotonic = None
+
+            self.get_logger().info(
+                "Hover command accepted. "
+                "Holding until the next command."
+            )
+            self._publish_flight_status(
+                "호버링 유지 중: 다음 명령 대기"
+            )
+            return
+
+        self._hover_deadline_monotonic = (
+            time.monotonic() + duration_s
+        )
+        self._state = AdapterState.HOVERING
+
+        self.get_logger().info(
+            "Timed hover command accepted: "
+            f"duration_s={duration_s:.2f}"
+        )
+        self._publish_flight_status(
+            f"호버링 중: {duration_s:.2f}초"
         )
 
     def _timer_callback(self) -> None:
@@ -866,6 +910,7 @@ class Px4CommandAdapter(Node):
             AdapterState.MOVING_TO_TARGET,
             AdapterState.ROTATING,
             AdapterState.HOLDING,
+            AdapterState.HOVERING,
         }
 
         if (
@@ -901,6 +946,10 @@ class Px4CommandAdapter(Node):
 
         if self._state is AdapterState.ROTATING:
             self._handle_rotation()
+            return
+
+        if self._state is AdapterState.HOVERING:
+            self._handle_hovering()
             return
 
         if self._state is AdapterState.HOLDING:
@@ -1425,6 +1474,30 @@ class Px4CommandAdapter(Node):
             "Rotation target reached. Holding target position and yaw."
         )
         self._publish_flight_status("회전 완료: 호버링 중")
+
+    def _handle_hovering(self) -> None:
+        """지정된 호버링 시간이 끝나면 명령 대기로 돌아간다."""
+        deadline = self._hover_deadline_monotonic
+
+        if deadline is None:
+            self._enter_error(
+                "Timed hover deadline is not available."
+            )
+            return
+
+        if time.monotonic() < deadline:
+            return
+
+        self._hover_deadline_monotonic = None
+        self._state = AdapterState.HOLDING
+
+        self.get_logger().info(
+            "Timed hover completed. "
+            "Waiting for the next command."
+        )
+        self._publish_flight_status(
+            "호버링 완료: 다음 명령 대기"
+        )
 
     def _monitor_holding_state(self) -> None:
         """위치 유지 중 PX4 제어 상태가 정상인지 감시한다."""

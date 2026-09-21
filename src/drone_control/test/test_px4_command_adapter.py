@@ -425,10 +425,11 @@ class RuntimeMoveAdapterStub:
             -2.0,
             -0.3,
         )
+        self._hover_deadline_monotonic = None
+        self.flight_statuses: list[str] = []
         self.messages_fresh = True
         self.offboard_and_armed = True
         self.logger = FakeLogger()
-        self.flight_statuses: list[str] = []
 
     def _messages_are_fresh(self):
         return self.messages_fresh
@@ -436,13 +437,13 @@ class RuntimeMoveAdapterStub:
     def _is_offboard_and_armed(self):
         return self.offboard_and_armed
 
-    def get_logger(self):
-        """테스트용 로거를 반환한다."""
-        return self.logger
-
     def _publish_flight_status(self, status: str) -> None:
         """실제 ROS 발행 대신 상태 알림을 기록한다."""
         self.flight_statuses.append(status)
+
+    def get_logger(self):
+        """테스트용 로거를 반환한다."""
+        return self.logger
 
 
 def test_runtime_move_prepares_body_relative_target():
@@ -671,4 +672,122 @@ def test_runtime_rotation_rejects_invalid_heading():
             adapter,
             yaw_deg=90.0,
             yaw_speed_dps=None,
+        )
+
+
+def test_runtime_hover_without_duration_keeps_holding_state():
+    """시간을 생략한 호버링은 다음 명령까지 유지한다."""
+    adapter = RuntimeMoveAdapterStub()
+    original_target = adapter._target_position
+
+    Px4CommandAdapter.hover(
+        adapter,
+        duration_s=None,
+    )
+
+    assert adapter._state is AdapterState.HOLDING
+    assert adapter._target_position == original_target
+    assert adapter._hover_deadline_monotonic is None
+    assert adapter.flight_statuses == [
+        "호버링 유지 중: 다음 명령 대기"
+    ]
+
+
+def test_runtime_timed_hover_sets_deadline(monkeypatch):
+    """시간 지정 호버링은 종료 시각과 전용 상태를 설정한다."""
+    adapter = RuntimeMoveAdapterStub()
+    monkeypatch.setattr(
+        "drone_control.px4_command_adapter.time.monotonic",
+        lambda: 100.0,
+    )
+
+    Px4CommandAdapter.hover(
+        adapter,
+        duration_s=3.0,
+    )
+
+    assert adapter._state is AdapterState.HOVERING
+    assert adapter._hover_deadline_monotonic == pytest.approx(103.0)
+    assert adapter.flight_statuses == [
+        "호버링 중: 3.00초"
+    ]
+
+
+def test_runtime_timed_hover_waits_before_deadline(monkeypatch):
+    """종료 시각 전에는 호버링 상태를 유지한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.HOVERING
+    adapter._hover_deadline_monotonic = 103.0
+    monkeypatch.setattr(
+        "drone_control.px4_command_adapter.time.monotonic",
+        lambda: 102.9,
+    )
+
+    Px4CommandAdapter._handle_hovering(adapter)
+
+    assert adapter._state is AdapterState.HOVERING
+    assert adapter._hover_deadline_monotonic == pytest.approx(103.0)
+
+
+def test_runtime_timed_hover_completes_at_deadline(monkeypatch):
+    """종료 시각이 되면 다시 명령 대기 상태로 돌아간다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.HOVERING
+    adapter._hover_deadline_monotonic = 103.0
+    monkeypatch.setattr(
+        "drone_control.px4_command_adapter.time.monotonic",
+        lambda: 103.0,
+    )
+
+    Px4CommandAdapter._handle_hovering(adapter)
+
+    assert adapter._state is AdapterState.HOLDING
+    assert adapter._hover_deadline_monotonic is None
+    assert adapter.flight_statuses == [
+        "호버링 완료: 다음 명령 대기"
+    ]
+
+
+def test_runtime_hover_rejects_command_outside_holding_state():
+    """명령 대기 상태가 아니면 호버링 명령을 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.MOVING_TO_TARGET
+
+    with pytest.raises(
+        RuntimeError,
+        match="requires the adapter to be holding",
+    ):
+        Px4CommandAdapter.hover(
+            adapter,
+            duration_s=3.0,
+        )
+
+
+def test_runtime_hover_rejects_stale_vehicle_data():
+    """PX4 데이터가 오래됐으면 호버링 명령을 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter.messages_fresh = False
+
+    with pytest.raises(
+        RuntimeError,
+        match="message is stale",
+    ):
+        Px4CommandAdapter.hover(
+            adapter,
+            duration_s=3.0,
+        )
+
+
+def test_runtime_hover_requires_armed_offboard_vehicle():
+    """Armed 및 Offboard 상태가 아니면 호버링을 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter.offboard_and_armed = False
+
+    with pytest.raises(
+        RuntimeError,
+        match="armed Offboard vehicle",
+    ):
+        Px4CommandAdapter.hover(
+            adapter,
+            duration_s=3.0,
         )
