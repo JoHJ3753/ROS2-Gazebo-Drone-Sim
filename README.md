@@ -612,13 +612,20 @@ Takeoff target reached. Holding current position and yaw.
 
 QGroundControl 표시값과 목표값 사이의 수 cm 차이는 시뮬레이션 위치 추정, 표시 반올림 및 기체 기준점 차이로 발생할 수 있습니다.
 
-### 3. 현재 단계의 착륙
+### 3. 런타임 착륙
 
-런타임 `land` 함수 연결 전에는 PX4의 `pxh>`에서 수동으로 착륙합니다.
+이륙 후 목표 고도에 도달하여 어댑터가 호버링 상태일 때,
+별도 터미널에서 단일 착륙 명령을 전송합니다.
 
-```text
-commander land
+```bash
+ros2 topic pub --once \
+/drone/validated_command \
+std_msgs/msg/String \
+"{data: '{\"name\":\"land\",\"arguments\":{}}'}"
 ```
+
+자연어 CLI가 실행 중이라면 `명령 > 착륙해`로 요청할 수도 있습니다.
+PX4 연결이 끊겼거나 아직 호버링 상태가 아니면 착륙 요청은 거부됩니다.
 
 정상적인 PX4 로그:
 
@@ -630,7 +637,7 @@ Disarmed by landing
 
 2026년 9월 21일 검증에서 착륙, 지면 감지, 자동 Disarm 및 프로펠러 정지를 확인했습니다.
 
-> 런타임 JSON `land` 명령은 현재 구현 중입니다.
+수동 점검이 필요한 경우 PX4의 `pxh>`에서 `commander land`를 사용할 수 있습니다.
 
 ## 🧭 기존 비행 기능 검증 결과
 
@@ -723,13 +730,21 @@ ros2 run drone_llm drone_cli
 ```text
 명령 > 2미터 이륙해줘
 PX4 어댑터로 전달됨 (실행 완료 아님): {"name": "takeoff", "arguments": {"altitude_m": 2.0}}
+[드론 상태] 이륙 준비 중: 목표 고도 2.00m
+[드론 상태] 이륙 중: Offboard 및 시동 확인
+[드론 상태] 목표 고도 도달: 호버링 중
+명령 > 착륙해
+[드론 상태] 착륙 중: PX4 자동 착륙 요청
+[드론 상태] 착륙 완료: 시동 해제 확인
 명령 > exit
 ```
 
 이 명령을 실제로 받으려면 PX4 어댑터도 실행 중이어야 합니다.
 CLI의 "전달됨"은 PX4가 명령을 완료했다는 뜻이 아닙니다.
-현재 런타임에서는 단일 `takeoff` 명령만 연결되어 있으며,
-착륙·이동 등 미구현 명령과 복합 명령은 발행하지 않습니다.
+현재 런타임에서는 단일 `takeoff`와 `land` 명령만 연결되어 있으며,
+이동 등 미구현 명령과 복합 명령은 발행하지 않습니다.
+`/drone/flight_status` 메시지는 PX4 어댑터의 상태 전환에 따라
+CLI와 ROS 로그에 표시됩니다. 표시 예시는 실제 비행 검증 결과가 아닙니다.
 
 CLI와 별개로 `/ask_llm` 서비스는 모델 원문 응답을 반환합니다.
 CLI를 사용할 때의 연결 경로는 다음과 같습니다.

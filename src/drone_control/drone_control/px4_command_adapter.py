@@ -39,6 +39,7 @@ from drone_control.yaw_calculator import (
 NODE_NAME = "px4_command_adapter"
 
 VALIDATED_COMMAND_TOPIC = "/drone/validated_command"
+FLIGHT_STATUS_TOPIC = "/drone/flight_status"
 
 CONTROL_PERIOD_SECONDS = 0.1
 SETPOINT_STREAM_COUNT = 20
@@ -427,6 +428,11 @@ class Px4CommandAdapter(Node):
             self._validated_command_callback,
             10,
         )
+        self._flight_status_publisher = self.create_publisher(
+            String,
+            FLIGHT_STATUS_TOPIC,
+            10,
+        )
 
         self._state = AdapterState.WAITING_FOR_READY
         self._vehicle_local_position: VehicleLocalPosition | None = None
@@ -496,10 +502,18 @@ class Px4CommandAdapter(Node):
             self.get_logger().error(
                 f"Command JSON decoding failed: {error}"
             )
+            self._publish_flight_status(f"명령 거부: JSON 오류: {error}")
         except (CommandExecutionError, RuntimeError) as error:
             self.get_logger().error(
                 f"Command execution rejected: {error}"
             )
+            self._publish_flight_status(f"명령 거부: {error}")
+
+    def _publish_flight_status(self, status: str) -> None:
+        """실제 PX4 제어 상태를 CLI에 알린다."""
+        message = String()
+        message.data = status
+        self._flight_status_publisher.publish(message)
 
     def takeoff(self, altitude_m: float) -> None:
         """명령 대기 상태에서 지정한 높이로 수직 이륙을 시작한다."""
@@ -531,6 +545,9 @@ class Px4CommandAdapter(Node):
         self.get_logger().info(
             "Takeoff command accepted: "
             f"altitude_m={altitude_m:.2f}"
+        )
+        self._publish_flight_status(
+            f"이륙 준비 중: 목표 고도 {altitude_m:.2f}m"
         )
 
     def arm(self) -> None:
@@ -571,6 +588,7 @@ class Px4CommandAdapter(Node):
             "Land command accepted. "
             "Waiting for PX4 landing and disarm."
         )
+        self._publish_flight_status("착륙 중: PX4 자동 착륙 요청")
 
     def move_drone(
         self,
@@ -743,6 +761,7 @@ class Px4CommandAdapter(Node):
                 "Vehicle data is stable. "
                 "Waiting for a validated command."
             )
+            self._publish_flight_status("명령 대기 중: 기체 상태 정상")
             return
 
         if self._state in {
@@ -908,6 +927,7 @@ class Px4CommandAdapter(Node):
         """오류 상태로 전환해 이후 제어 메시지 발행을 막는다."""
         self._state = AdapterState.ERROR
         self.get_logger().error(message)
+        self._publish_flight_status(f"비행 오류: {message}")
 
     def _is_vehicle_ready(self) -> bool:
         """이륙 목표를 생성할 수 있는 상태인지 확인한다."""
@@ -1166,6 +1186,7 @@ class Px4CommandAdapter(Node):
             self.get_logger().info(
                 "Offboard mode enabled and vehicle armed."
             )
+            self._publish_flight_status("이륙 중: Offboard 및 시동 확인")
             return
 
         self._command_retry_counter += 1
@@ -1184,8 +1205,7 @@ class Px4CommandAdapter(Node):
     def _handle_takeoff(self) -> None:
         """수직 이륙을 완료한 뒤 선택한 좌표 방식으로 이동한다."""
         if not self._is_offboard_and_armed():
-            self._state = AdapterState.ERROR
-            self.get_logger().error(
+            self._enter_error(
                 "Offboard mode or armed state was lost during takeoff."
             )
             return
@@ -1202,6 +1222,9 @@ class Px4CommandAdapter(Node):
                 "Takeoff target reached. "
                 "Holding current position and yaw."
             )
+            self._publish_flight_status(
+                "목표 고도 도달: 호버링 중"
+            )
             return
 
         try:
@@ -1211,8 +1234,7 @@ class Px4CommandAdapter(Node):
             RuntimeError,
             ValueError,
         ) as error:
-            self._state = AdapterState.ERROR
-            self.get_logger().error(
+            self._enter_error(
                 f"Failed to prepare post-takeoff target: {error}"
             )
             return
@@ -1226,6 +1248,7 @@ class Px4CommandAdapter(Node):
             self.get_logger().info(
                 "Takeoff target reached. Rotating to yaw target."
             )
+            self._publish_flight_status("회전 중: 목표 방향으로 기수 변경")
             return
 
         self._state = AdapterState.MOVING_TO_TARGET
@@ -1233,12 +1256,12 @@ class Px4CommandAdapter(Node):
             "Takeoff target reached. "
             f"Moving to {self._target_mode} target."
         )
+        self._publish_flight_status("이동 중: 목표 위치로 비행")
 
     def _handle_move_to_target(self) -> None:
         """최종 목표까지 이동하고 도달하면 위치 유지로 전환한다."""
         if not self._is_offboard_and_armed():
-            self._state = AdapterState.ERROR
-            self.get_logger().error(
+            self._enter_error(
                 "Offboard mode or armed state was lost while moving."
             )
             return
@@ -1250,8 +1273,7 @@ class Px4CommandAdapter(Node):
         target = self._target_position
 
         if position is None or target is None:
-            self._state = AdapterState.ERROR
-            self.get_logger().error(
+            self._enter_error(
                 "Position data was lost after reaching target."
             )
             return
@@ -1284,12 +1306,12 @@ class Px4CommandAdapter(Node):
             f"{self._target_mode.capitalize()} target reached. "
             "Holding target position."
         )
+        self._publish_flight_status("목표 위치 도달: 호버링 중")
 
     def _handle_rotation(self) -> None:
         """현재 위치를 유지하면서 목표 yaw까지 회전한다."""
         if not self._is_offboard_and_armed():
-            self._state = AdapterState.ERROR
-            self.get_logger().error(
+            self._enter_error(
                 "Offboard mode or armed state was lost while rotating."
             )
             return
@@ -1297,8 +1319,7 @@ class Px4CommandAdapter(Node):
         try:
             reached_target_yaw = self._has_reached_target_yaw()
         except YawCalculationError as error:
-            self._state = AdapterState.ERROR
-            self.get_logger().error(
+            self._enter_error(
                 f"Failed to evaluate yaw target: {error}"
             )
             return
@@ -1309,8 +1330,7 @@ class Px4CommandAdapter(Node):
         position = self._vehicle_local_position
 
         if position is None:
-            self._state = AdapterState.ERROR
-            self.get_logger().error(
+            self._enter_error(
                 "Position data was lost after reaching yaw target."
             )
             return
@@ -1332,6 +1352,7 @@ class Px4CommandAdapter(Node):
         self.get_logger().info(
             "Rotation target reached. Holding target position and yaw."
         )
+        self._publish_flight_status("회전 완료: 호버링 중")
 
     def _monitor_holding_state(self) -> None:
         """위치 유지 중 PX4 제어 상태가 정상인지 감시한다."""
@@ -1340,8 +1361,7 @@ class Px4CommandAdapter(Node):
 
         # 자동으로 재시동하면 착륙 요청과 충돌할 수 있으므로
         # 상태를 복구하지 않고 명확한 오류로 처리한다.
-        self._state = AdapterState.ERROR
-        self.get_logger().error(
+        self._enter_error(
             "Offboard mode or armed state was lost while holding."
         )
 
@@ -1361,6 +1381,9 @@ class Px4CommandAdapter(Node):
 
             self.get_logger().info(
                 "Landing completed. Vehicle is disarmed."
+            )
+            self._publish_flight_status(
+                "착륙 완료: 시동 해제 확인"
             )
             return
 
