@@ -166,8 +166,13 @@ def build_run_directory(output_root: Path) -> Path:
 
 def load_and_validate_datasets(
     dataset_directory: Path,
-) -> tuple[Dataset, Dataset, list[dict[str, Any]]]:
-    """세 Dataset split을 읽고 현재 Function Schema로 검증한다."""
+) -> tuple[
+    Dataset,
+    Dataset,
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
+    """학습·검증·일반 시험·강건성 시험 데이터를 읽고 검증한다."""
     paths = {
         split: dataset_directory / f"{split}.jsonl"
         for split in ("train", "validation", "test")
@@ -183,6 +188,15 @@ def load_and_validate_datasets(
     for samples in all_samples.values():
         validate_dataset_samples(samples, DRONE_COMMAND_SCHEMA)
 
+    robustness_path = dataset_directory / "test_robustness.jsonl"
+    robustness_samples: list[dict[str, Any]] = []
+    if robustness_path.is_file():
+        robustness_samples = load_jsonl(robustness_path)
+        validate_dataset_samples(
+            robustness_samples,
+            DRONE_COMMAND_SCHEMA,
+        )
+
     dataset = load_dataset(
         "json",
         data_files={
@@ -194,6 +208,7 @@ def load_and_validate_datasets(
         dataset["train"],
         dataset["validation"],
         all_samples["test"],
+        robustness_samples,
     )
 
 
@@ -356,7 +371,12 @@ def main() -> None:
     environment_info = collect_environment_info(REPOSITORY_ROOT)
     log_mapping(logger, "실행 환경", environment_info)
 
-    train_dataset, validation_dataset, test_samples = (
+    (
+        train_dataset,
+        validation_dataset,
+        test_samples,
+        robustness_samples,
+    ) = (
         load_and_validate_datasets(arguments.dataset_dir.resolve())
     )
     dataset_info = {
@@ -364,6 +384,7 @@ def main() -> None:
         "train_samples": len(train_dataset),
         "validation_samples": len(validation_dataset),
         "test_samples": len(test_samples),
+        "robustness_test_samples": len(robustness_samples),
     }
     log_mapping(logger, "Dataset", dataset_info)
 
@@ -405,6 +426,8 @@ def main() -> None:
 
     baseline_records = []
     baseline_metrics = _empty_metrics(test_samples)
+    robustness_baseline_records = []
+    robustness_baseline_metrics = _empty_metrics(robustness_samples)
     if not arguments.skip_baseline_evaluation:
         logger.info("파인튜닝 전 기준 평가를 시작합니다.")
         baseline_records, baseline_metrics = evaluate_model(
@@ -419,6 +442,31 @@ def main() -> None:
             max_new_tokens=arguments.max_new_tokens,
         )
         log_mapping(logger, "파인튜닝 전 평가", baseline_metrics)
+
+        if robustness_samples:
+            logger.info(
+                "파인튜닝 전 오타·사투리 강건성 평가를 시작합니다."
+            )
+            (
+                robustness_baseline_records,
+                robustness_baseline_metrics,
+            ) = evaluate_model(
+                model=model,
+                tokenizer=tokenizer,
+                samples=robustness_samples,
+                system_prompt=SYSTEM_PROMPT,
+                schema=DRONE_COMMAND_SCHEMA,
+                output_path=(
+                    run_directory
+                    / "baseline_robustness_predictions.jsonl"
+                ),
+                max_new_tokens=arguments.max_new_tokens,
+            )
+            log_mapping(
+                logger,
+                "파인튜닝 전 오타·사투리 평가",
+                robustness_baseline_metrics,
+            )
 
     tokenized_train = tokenize_dataset(
         train_dataset,
@@ -483,11 +531,46 @@ def main() -> None:
     )
     log_mapping(logger, "파인튜닝 후 평가", fine_tuned_metrics)
 
+    robustness_fine_tuned_records = []
+    robustness_fine_tuned_metrics = _empty_metrics(robustness_samples)
+    if robustness_samples:
+        logger.info("파인튜닝 후 오타·사투리 강건성 평가를 시작합니다.")
+        (
+            robustness_fine_tuned_records,
+            robustness_fine_tuned_metrics,
+        ) = evaluate_model(
+            model=model,
+            tokenizer=tokenizer,
+            samples=robustness_samples,
+            system_prompt=SYSTEM_PROMPT,
+            schema=DRONE_COMMAND_SCHEMA,
+            output_path=(
+                run_directory
+                / "finetuned_robustness_predictions.jsonl"
+            ),
+            max_new_tokens=arguments.max_new_tokens,
+        )
+        log_mapping(
+            logger,
+            "파인튜닝 후 오타·사투리 평가",
+            robustness_fine_tuned_metrics,
+        )
+
     failures = select_failures(fine_tuned_records)
     write_jsonl(run_directory / "failures.jsonl", failures)
+    robustness_failures = select_failures(
+        robustness_fine_tuned_records
+    )
+    if robustness_samples:
+        write_jsonl(
+            run_directory / "robustness_failures.jsonl",
+            robustness_failures,
+        )
     metrics = {
         "baseline": baseline_metrics,
         "fine_tuned": fine_tuned_metrics,
+        "robustness_baseline": robustness_baseline_metrics,
+        "robustness_fine_tuned": robustness_fine_tuned_metrics,
     }
     write_json(run_directory / "metrics.json", metrics)
 
@@ -502,10 +585,11 @@ def main() -> None:
                 else "None (base model)"
             ),
             "Dataset": arguments.dataset_dir.name,
-            "Train / Validation / Test": (
+            "Train / Validation / Test / Robustness": (
                 f"{len(train_dataset)} / "
                 f"{len(validation_dataset)} / "
-                f"{len(test_samples)}"
+                f"{len(test_samples)} / "
+                f"{len(robustness_samples)}"
             ),
             "GPU": environment_info["gpu"],
         }
@@ -516,9 +600,26 @@ def main() -> None:
             baseline_metrics=baseline_metrics,
             fine_tuned_records=fine_tuned_records,
             fine_tuned_metrics=fine_tuned_metrics,
+            robustness_baseline_records=(
+                robustness_baseline_records
+            ),
+            robustness_baseline_metrics=(
+                robustness_baseline_metrics
+            ),
+            robustness_fine_tuned_records=(
+                robustness_fine_tuned_records
+            ),
+            robustness_fine_tuned_metrics=(
+                robustness_fine_tuned_metrics
+            ),
         )
 
     logger.info("남은 실패 샘플 수: %d", len(failures))
+    if robustness_samples:
+        logger.info(
+            "남은 오타·사투리 실패 샘플 수: %d",
+            len(robustness_failures),
+        )
     logger.info("모든 결과 저장 완료: %s", run_directory)
 
 

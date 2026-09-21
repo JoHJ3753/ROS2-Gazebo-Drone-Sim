@@ -315,6 +315,10 @@ def write_comparison_report(
     baseline_metrics: dict[str, Any],
     fine_tuned_records: list[dict[str, Any]],
     fine_tuned_metrics: dict[str, Any],
+    robustness_baseline_records: list[dict[str, Any]] | None = None,
+    robustness_baseline_metrics: dict[str, Any] | None = None,
+    robustness_fine_tuned_records: list[dict[str, Any]] | None = None,
+    robustness_fine_tuned_metrics: dict[str, Any] | None = None,
 ) -> None:
     """파인튜닝 전후 결과를 발표 자료용 TXT로 작성한다."""
     lines = [
@@ -387,8 +391,73 @@ def write_comparison_report(
     _append_examples(lines, "대표 개선 사례", improved_records)
     _append_examples(lines, "학습 후 남은 실패 사례", remaining_failures)
 
+    if (
+        robustness_baseline_records is not None
+        and robustness_baseline_metrics is not None
+        and robustness_fine_tuned_records is not None
+        and robustness_fine_tuned_metrics is not None
+        and robustness_fine_tuned_records
+    ):
+        _append_robustness_report(
+            lines=lines,
+            baseline_records=robustness_baseline_records,
+            baseline_metrics=robustness_baseline_metrics,
+            fine_tuned_records=robustness_fine_tuned_records,
+            fine_tuned_metrics=robustness_fine_tuned_metrics,
+            metric_labels=metric_labels,
+        )
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _append_robustness_report(
+    lines: list[str],
+    baseline_records: list[dict[str, Any]],
+    baseline_metrics: dict[str, Any],
+    fine_tuned_records: list[dict[str, Any]],
+    fine_tuned_metrics: dict[str, Any],
+    metric_labels: dict[str, str],
+) -> None:
+    """비교 보고서에 오타·사투리 강건성 평가 결과를 추가한다."""
+    lines.extend(
+        [
+            "",
+            "[오타·사투리 강건성 성능]",
+            _metric_header(),
+        ]
+    )
+    for metric_name, label in metric_labels.items():
+        lines.append(
+            f"{label:<24}"
+            f"{baseline_metrics[metric_name]:>12.2f}%"
+            f"{fine_tuned_metrics[metric_name]:>14.2f}%"
+        )
+
+    improved_records = []
+    remaining_failures = []
+    for baseline, fine_tuned in zip(
+        baseline_records,
+        fine_tuned_records,
+        strict=True,
+    ):
+        baseline_passed = baseline["metrics"]["exact_match"]
+        fine_tuned_passed = fine_tuned["metrics"]["exact_match"]
+        if not baseline_passed and fine_tuned_passed:
+            improved_records.append((baseline, fine_tuned))
+        if not fine_tuned_passed:
+            remaining_failures.append((baseline, fine_tuned))
+
+    _append_examples(
+        lines,
+        "오타·사투리 대표 개선 사례",
+        improved_records,
+    )
+    _append_examples(
+        lines,
+        "오타·사투리 학습 후 남은 실패 사례",
+        remaining_failures,
+    )
 
 
 def _metric_header() -> str:
