@@ -147,6 +147,13 @@ def test_single_emergency_stop_is_accepted() -> None:
     assert prepare_runtime_command(make_response([command])) == command
 
 
+def test_single_return_home_is_accepted() -> None:
+    """실행 가능한 단일 홈 복귀 명령을 전달한다."""
+    command = {"name": "return_home", "arguments": {}}
+
+    assert prepare_runtime_command(make_response([command])) == command
+
+
 def test_compound_command_is_rejected() -> None:
     """완료 확인 없이 연속 명령을 발행하지 않는다."""
     takeoff = {"name": "takeoff", "arguments": {"altitude_m": 2.0}}

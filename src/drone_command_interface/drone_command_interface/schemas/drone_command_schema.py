@@ -34,8 +34,11 @@ def _command(
         required:
             반드시 포함되어야 하는 인자 이름 목록.
 
-    Returns:
+    Returns
+    -------
+    dict[str, Any]
         name과 arguments를 갖는 명령 객체의 JSON Schema.
+
     """
     # 모든 명령의 세부 인자는 arguments 객체 안에 저장한다.
     arguments: dict[str, Any] = {

@@ -39,9 +39,11 @@ def validate(result: dict) -> None:
         result:
             LLM이 출력했다고 가정하는 드론 명령 딕셔너리.
 
-    Raises:
-        ValidationError:
-            필수 필드가 없거나 값이 스키마 규칙에 맞지 않는 경우.
+    Raises
+    ------
+    ValidationError
+        필수 필드가 없거나 값이 스키마 규칙에 맞지 않는 경우.
+
     """
     VALIDATOR.validate(result)
 
@@ -288,7 +290,7 @@ def test_move_drone_rejects_additional_argument():
 
 def test_accepted_requires_at_least_one_command():
     """
-    accepted 상태에는 실행할 명령이 하나 이상 필요한지 확인한다.
+    Accepted 상태에는 실행할 명령이 하나 이상 필요한지 확인한다.
 
     accepted인데 commands가 비어 있으면 의미가 모순되므로
     스키마 검증에 실패해야 한다.
@@ -305,7 +307,7 @@ def test_accepted_requires_at_least_one_command():
 
 def test_accepted_requires_null_message():
     """
-    accepted 상태에서 message가 반드시 null인지 확인한다.
+    Accepted 상태에서 message가 반드시 null인지 확인한다.
 
     accepted는 정상적으로 명령을 생성했다는 의미이므로
     오류 또는 재질문 메시지를 포함하면 안 된다.
@@ -523,7 +525,7 @@ def test_exclusive_command_is_valid_when_used_alone(exclusive_command):
 )
 def test_exclusive_command_rejects_other_commands(exclusive_command):
     """
-    cancel 또는 emergency_stop이 다른 명령과 함께 있으면 거부하는지 확인한다.
+    Cancel 또는 emergency_stop이 다른 명령과 함께 있으면 거부하는지 확인한다.
 
     전용 명령이 배열의 앞이나 뒤에 있어도 동일하게 거부되어야 하므로
     두 가지 순서를 모두 검사한다.

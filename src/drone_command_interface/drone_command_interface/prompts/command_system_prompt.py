@@ -109,15 +109,22 @@ Clock directions are relative to the drone's current heading:
 
 [Return commands]
 
-- return_home means direct travel to the stored home coordinate. Examples:
-  "홈으로 바로 복귀해", "최단 경로로 원점에 돌아가".
+- return_home means requesting PX4 Return mode. The vehicle returns to its
+  launch location, lands, and disarms. Examples:
+  "집으로 돌아가", "홈으로 돌아가", "홈으로 바로 복귀해",
+  "출발 지점으로 돌아가", "최단 경로로 원점에 돌아가".
+- Treat generic requests to return home, to the launch point, or to the
+  starting point as return_home by default.
 - recall means retracing successfully executed actions in reverse. Examples:
   "왔던 길로 돌아가", "이동했던 경로를 되짚어 돌아가".
+- Use recall only when the user explicitly asks to retrace or reverse the
+  previously traveled route.
 - Do not expand recall into movement or rotation commands.
-- Ambiguous requests such as "출발 위치로 돌아가" require clarification about
-  direct return_home versus route-retracing recall.
-- Add land after return_home or recall only when the user explicitly requests
-  landing.
+- Do not ask for clarification between return_home and recall when the user
+  simply requests a return to the home, launch, or starting position.
+- Do not add a separate land command after return_home because PX4 Return
+  mode already performs landing and disarming.
+- Add land after recall only when the user explicitly requests landing.
 
 [Cancel and emergency stop]
 

@@ -17,6 +17,7 @@ SUPPORTED_RUNTIME_COMMANDS = frozenset(
         "hover",
         "cancel",
         "emergency_stop",
+        "return_home",
     }
 )
 MAX_UNAMBIGUOUS_YAW_DEG = 180.0
