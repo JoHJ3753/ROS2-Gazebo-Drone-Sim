@@ -49,7 +49,7 @@ REQUIRED_ROS_DOMAIN_ID = 42
 MESSAGE_FRESHNESS_TIMEOUT_SECONDS = 1.0
 START_STABILITY_REQUIRED_TICKS = 20
 TAKEOFF_STABILITY_REQUIRED_TICKS = 10
-TAKEOFF_STABILITY_TIMEOUT_SECONDS = 15.0
+TAKEOFF_STABILITY_TIMEOUT_SECONDS = 30.0
 
 MAX_START_HORIZONTAL_SPEED_MPS = 0.15
 MAX_START_VERTICAL_SPEED_MPS = 0.10
@@ -108,6 +108,11 @@ PX4_SOURCE_COMPONENT_ID = 1
 
 PX4_CUSTOM_MAIN_MODE = 1.0
 PX4_OFFBOARD_SUB_MODE = 6.0
+
+# MAV_CMD_COMPONENT_ARM_DISARM의 param2에 이 값을 전달하면
+# PX4가 비행 중에도 강제 Disarm을 수행한다.
+# 실제 기체에서는 추락을 유발하므로 시뮬레이션 전용이다.
+PX4_FORCE_DISARM_MAGIC = 21196.0
 
 
 def calculate_takeoff_target(
@@ -338,6 +343,8 @@ class AdapterState(Enum):
     HOVERING = "hovering"
     LANDING = "landing"
     LANDED = "landed"
+    EMERGENCY_STOPPING = "emergency_stopping"
+    EMERGENCY_STOPPED = "emergency_stopped"
     ERROR = "error"
 
 
@@ -962,9 +969,44 @@ class Px4CommandAdapter(Node):
             "동작 취소 완료: 현재 위치에서 호버링"
         )
 
+    def emergency_stop(self) -> None:
+        """현재 동작을 중단하고 PX4에 강제 Disarm을 요청한다."""
+        self._pending_takeoff_altitude_m = None
+        self._takeoff_stability_counter = 0
+        self._takeoff_stability_deadline_monotonic = None
+
+        self._target_position = None
+        self._mission_target_position = None
+        self._coordinate_calculator = None
+        self._hover_deadline_monotonic = None
+
+        self._setpoint_stream_counter = 0
+        self._command_retry_counter = 0
+        self._state = AdapterState.EMERGENCY_STOPPING
+
+        # 첫 요청은 명령 수신 즉시 발행한다.
+        self._request_force_disarm()
+
+        self.get_logger().warning(
+            "Emergency stop accepted. "
+            "Stopping setpoint output and requesting forced disarm."
+        )
+        self._publish_flight_status(
+            "긴급 정지 중: 강제 시동 해제 요청"
+        )
+
     def _timer_callback(self) -> None:
         """안전 조건을 확인한 뒤 현재 비행 단계를 진행한다."""
-        if self._state is AdapterState.ERROR:
+        # 긴급 정지는 통신 신선도, Failsafe 및 경쟁 발행자 검사보다
+        # 우선한다. 이 상태에서는 Offboard 세트포인트도 발행하지 않는다.
+        if self._state is AdapterState.EMERGENCY_STOPPING:
+            self._handle_emergency_stop()
+            return
+
+        if self._state in {
+            AdapterState.ERROR,
+            AdapterState.EMERGENCY_STOPPED,
+        }:
             return
 
         competing_topics = self._find_competing_command_publishers()
@@ -1098,6 +1140,18 @@ class Px4CommandAdapter(Node):
             for received_at in received_times
         )
 
+    def _status_message_is_fresh(self) -> bool:
+        """긴급 정지 완료 판정에 사용할 상태 메시지 신선도를 확인한다."""
+        received_at = self._last_status_received_at
+
+        if received_at is None:
+            return False
+
+        return (
+            time.monotonic() - received_at
+            <= MESSAGE_FRESHNESS_TIMEOUT_SECONDS
+        )
+
     def _current_reset_signature(self) -> tuple[int, int, int] | None:
         """추정기 위치와 방향 재설정 카운터를 반환한다."""
         position = self._vehicle_local_position
@@ -1160,6 +1214,36 @@ class Px4CommandAdapter(Node):
             self._start_stability_counter
             >= START_STABILITY_REQUIRED_TICKS
         )
+
+    def _handle_emergency_stop(self) -> None:
+        """강제 Disarm을 재요청하고 실제 시동 해제를 확인한다."""
+        if (
+            self._status_message_is_fresh()
+            and is_vehicle_disarmed(self._vehicle_status)
+        ):
+            self._command_retry_counter = 0
+            self._state = AdapterState.EMERGENCY_STOPPED
+
+            self.get_logger().warning(
+                "Emergency stop completed. Vehicle is disarmed."
+            )
+            self._publish_flight_status(
+                "긴급 정지 완료: 시동 해제 확인"
+            )
+            return
+
+        self._command_retry_counter += 1
+
+        if (
+            self._command_retry_counter
+            < COMMAND_RETRY_INTERVAL_TICKS
+        ):
+            return
+
+        # UDP 명령 유실에 대비해 시동 해제가 확인될 때까지
+        # 약 1초 간격으로 강제 Disarm을 다시 요청한다.
+        self._request_force_disarm()
+        self._command_retry_counter = 0
 
     def _handle_takeoff_stability_wait(self) -> None:
         """연속 속도 안정화가 확인되면 실제 이륙 절차를 시작한다."""
@@ -1845,6 +1929,18 @@ class Px4CommandAdapter(Node):
 
         self.get_logger().info(
             "Requested PX4 automatic landing."
+        )
+
+    def _request_force_disarm(self) -> None:
+        """PX4에 시뮬레이션용 강제 Disarm을 요청한다."""
+        self._publish_vehicle_command(
+            command=VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM,
+            param1=0.0,
+            param2=PX4_FORCE_DISARM_MAGIC,
+        )
+
+        self.get_logger().warning(
+            "Requested PX4 forced disarm for emergency stop."
         )
 
     def _publish_offboard_control_mode(self) -> None:

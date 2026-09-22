@@ -60,6 +60,10 @@ class FakeDroneCommandHandler:
         """비행 동작 취소 호출을 기록한다."""
         self.calls.append(("cancel",))
 
+    def emergency_stop(self) -> None:
+        """긴급 정지 호출을 기록한다."""
+        self.calls.append(("emergency_stop",))
+
 
 @pytest.mark.parametrize(
     "command, expected_call",
@@ -115,6 +119,10 @@ class FakeDroneCommandHandler:
             ("hover", 3.0),
         ),
         ({"name": "cancel", "arguments": {}}, ("cancel",)),
+        (
+            {"name": "emergency_stop", "arguments": {}},
+            ("emergency_stop",),
+        ),
     ],
 )
 def test_execute_routes_valid_command(
@@ -176,6 +184,10 @@ def test_execute_rejects_invalid_command_structure(command: Any) -> None:
             "arguments": {"unexpected": 1},
         },
         {"name": "cancel", "arguments": {"unexpected": 1}},
+        {
+            "name": "emergency_stop",
+            "arguments": {"unexpected": 1},
+        },
     ],
 )
 def test_execute_rejects_missing_or_unexpected_arguments(

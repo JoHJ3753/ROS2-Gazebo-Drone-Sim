@@ -47,6 +47,9 @@ class DroneCommandHandler(Protocol):
     def cancel(self) -> None:
         """현재 수행 중인 취소 가능한 비행 동작을 중단한다."""
 
+    def emergency_stop(self) -> None:
+        """기체의 모터를 즉시 강제 정지한다."""
+
 
 _SUPPORTED_COMMAND_NAMES = frozenset(
     {
@@ -58,6 +61,7 @@ _SUPPORTED_COMMAND_NAMES = frozenset(
         "rotate_relative",
         "hover",
         "cancel",
+        "emergency_stop",
     }
 )
 
@@ -122,6 +126,15 @@ class CommandExecutor:
                 optional=set(),
             )
             self._handler.cancel()
+            return
+
+        if command_name == "emergency_stop":
+            self._require_arguments(
+                arguments,
+                required=set(),
+                optional=set(),
+            )
+            self._handler.emergency_stop()
             return
 
         # _validate_command에서 지원 여부를 확인하므로 도달할 수 없다.

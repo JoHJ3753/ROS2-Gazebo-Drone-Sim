@@ -5,6 +5,7 @@ import pytest
 
 from px4_msgs.msg import VehicleLocalPosition
 from px4_msgs.msg import VehicleStatus
+from px4_msgs.msg import VehicleCommand
 
 from drone_control.px4_command_adapter import calculate_takeoff_target
 from drone_control.px4_command_adapter import has_reached_altitude
@@ -20,7 +21,10 @@ from drone_control.px4_command_adapter import Px4CommandAdapter
 from drone_control.px4_command_adapter import TARGET_MODE_RELATIVE
 from drone_control.px4_command_adapter import TARGET_MODE_ROTATION
 from drone_control.px4_command_adapter import (
+    COMMAND_RETRY_INTERVAL_TICKS,
+    PX4_FORCE_DISARM_MAGIC,
     TAKEOFF_STABILITY_REQUIRED_TICKS,
+    TAKEOFF_STABILITY_TIMEOUT_SECONDS,
 )
 
 
@@ -482,6 +486,8 @@ class RuntimeMoveAdapterStub:
         self.messages_fresh = True
         self.offboard_and_armed = True
         self.logger = FakeLogger()
+        self.status_message_fresh = True
+        self.force_disarm_request_count = 0
 
     def _messages_are_fresh(self):
         return self.messages_fresh
@@ -499,6 +505,31 @@ class RuntimeMoveAdapterStub:
             self,
             height_m,
         )
+
+    def _status_message_is_fresh(self):
+        """테스트에서 상태 메시지 신선도를 반환한다."""
+        return self.status_message_fresh
+
+    def _request_force_disarm(self):
+        """강제 Disarm 요청 횟수를 기록한다."""
+        self.force_disarm_request_count += 1
+
+    def get_logger(self):
+        """테스트용 로거를 반환한다."""
+        return self.logger
+
+
+class VehicleCommandPublisherStub:
+    """발행되는 PX4 VehicleCommand 인자를 기록한다."""
+
+    def __init__(self):
+        """명령 기록과 테스트 로거를 준비한다."""
+        self.commands = []
+        self.logger = FakeLogger()
+
+    def _publish_vehicle_command(self, **command):
+        """실제 ROS 발행 대신 명령 인자를 기록한다."""
+        self.commands.append(command)
 
     def get_logger(self):
         """테스트용 로거를 반환한다."""
@@ -965,7 +996,9 @@ def test_runtime_takeoff_waits_for_stable_speed(monkeypatch):
     assert adapter._takeoff_stability_counter == 0
     assert (
         adapter._takeoff_stability_deadline_monotonic
-        == pytest.approx(115.0)
+        == pytest.approx(
+            100.0 + TAKEOFF_STABILITY_TIMEOUT_SECONDS
+        )
     )
     assert adapter.flight_statuses == [
         "이륙 대기 중: 속도 안정화 확인"
@@ -1098,3 +1131,120 @@ def test_takeoff_wait_tolerates_transient_ineligible_state(monkeypatch):
         == pytest.approx(115.0)
     )
     assert adapter.flight_statuses == []
+
+
+@pytest.mark.parametrize(
+    "active_state",
+    [
+        AdapterState.STREAMING_SETPOINTS,
+        AdapterState.REQUESTING_OFFBOARD,
+        AdapterState.TAKING_OFF,
+        AdapterState.MOVING_TO_TARGET,
+        AdapterState.ROTATING,
+        AdapterState.HOLDING,
+        AdapterState.HOVERING,
+        AdapterState.LANDING,
+        AdapterState.ERROR,
+    ],
+)
+def test_emergency_stop_overrides_current_state(active_state):
+    """긴급 정지는 현재 비행 상태와 관계없이 강제 Disarm을 시작한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = active_state
+    adapter._vehicle_status.arming_state = (
+        VehicleStatus.ARMING_STATE_ARMED
+    )
+    adapter._pending_takeoff_altitude_m = 2.0
+    adapter._takeoff_stability_counter = 3
+    adapter._takeoff_stability_deadline_monotonic = 115.0
+    adapter._hover_deadline_monotonic = 200.0
+
+    Px4CommandAdapter.emergency_stop(adapter)
+
+    assert adapter._state is AdapterState.EMERGENCY_STOPPING
+    assert adapter.force_disarm_request_count == 1
+    assert adapter._pending_takeoff_altitude_m is None
+    assert adapter._takeoff_stability_counter == 0
+    assert adapter._takeoff_stability_deadline_monotonic is None
+    assert adapter._target_position is None
+    assert adapter._mission_target_position is None
+    assert adapter._coordinate_calculator is None
+    assert adapter._hover_deadline_monotonic is None
+    assert adapter.flight_statuses == [
+        "긴급 정지 중: 강제 시동 해제 요청"
+    ]
+
+
+def test_emergency_stop_completes_after_fresh_disarmed_status():
+    """최신 PX4 상태에서 Disarm이 확인되면 긴급 정지를 완료한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._vehicle_status.arming_state = (
+        VehicleStatus.ARMING_STATE_ARMED
+    )
+
+    Px4CommandAdapter.emergency_stop(adapter)
+
+    adapter._vehicle_status.arming_state = (
+        VehicleStatus.ARMING_STATE_DISARMED
+    )
+    Px4CommandAdapter._handle_emergency_stop(adapter)
+
+    assert adapter._state is AdapterState.EMERGENCY_STOPPED
+    assert adapter._command_retry_counter == 0
+    assert adapter.flight_statuses == [
+        "긴급 정지 중: 강제 시동 해제 요청",
+        "긴급 정지 완료: 시동 해제 확인",
+    ]
+
+
+def test_emergency_stop_retries_forced_disarm():
+    """시동 상태가 유지되면 강제 Disarm을 주기적으로 재요청한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.EMERGENCY_STOPPING
+    adapter._vehicle_status.arming_state = (
+        VehicleStatus.ARMING_STATE_ARMED
+    )
+    adapter._command_retry_counter = (
+        COMMAND_RETRY_INTERVAL_TICKS - 1
+    )
+
+    Px4CommandAdapter._handle_emergency_stop(adapter)
+
+    assert adapter._state is AdapterState.EMERGENCY_STOPPING
+    assert adapter.force_disarm_request_count == 1
+    assert adapter._command_retry_counter == 0
+
+
+def test_emergency_stop_does_not_complete_with_stale_status():
+    """오래된 Disarm 상태만으로 긴급 정지 완료를 판정하지 않는다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.EMERGENCY_STOPPING
+    adapter.status_message_fresh = False
+    adapter._vehicle_status.arming_state = (
+        VehicleStatus.ARMING_STATE_DISARMED
+    )
+    adapter._command_retry_counter = (
+        COMMAND_RETRY_INTERVAL_TICKS - 1
+    )
+
+    Px4CommandAdapter._handle_emergency_stop(adapter)
+
+    assert adapter._state is AdapterState.EMERGENCY_STOPPING
+    assert adapter.force_disarm_request_count == 1
+
+
+def test_force_disarm_uses_px4_magic_value():
+    """강제 Disarm 명령에 PX4 확인용 매직 값을 포함한다."""
+    adapter = VehicleCommandPublisherStub()
+
+    Px4CommandAdapter._request_force_disarm(adapter)
+
+    assert adapter.commands == [
+        {
+            "command": (
+                VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM
+            ),
+            "param1": 0.0,
+            "param2": PX4_FORCE_DISARM_MAGIC,
+        }
+    ]
