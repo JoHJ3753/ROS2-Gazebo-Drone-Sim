@@ -18,6 +18,13 @@ def make_response(commands: list[dict]) -> str:
     )
 
 
+def test_single_arm_is_accepted() -> None:
+    """실행 가능한 단일 시동 명령을 전달한다."""
+    command = {"name": "arm", "arguments": {}}
+
+    assert prepare_runtime_command(make_response([command])) == command
+
+
 def test_single_takeoff_is_accepted() -> None:
     """실행 가능한 단일 이륙 명령을 전달한다."""
     command = {"name": "takeoff", "arguments": {"altitude_m": 2.0}}

@@ -9,6 +9,7 @@ from drone_command_interface.command_output_parser import (
 
 SUPPORTED_RUNTIME_COMMANDS = frozenset(
     {
+        "arm",
         "takeoff",
         "land",
         "move_drone",
