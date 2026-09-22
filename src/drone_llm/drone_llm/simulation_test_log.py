@@ -1,6 +1,7 @@
 """시뮬레이션 명령 한 건의 실행 결과를 구조화한다."""
 
 import json
+import math
 from dataclasses import asdict
 from dataclasses import dataclass
 from datetime import datetime
@@ -38,6 +39,17 @@ class SimulationTestRecord:
     failure_stage: str | None = None
     failure_reason: str | None = None
     flight_status: str | None = None
+    model_id: str | None = None
+    case_id: str | None = None
+    category: str | None = None
+    expected_status: str | None = None
+    expected_commands: list[dict[str, Any]] | None = None
+    expected_runtime: str | None = None
+    llm_latency_seconds: float | None = None
+    bridge_latency_seconds: float | None = None
+    flight_latency_seconds: float | None = None
+    position_error_m: float | None = None
+    yaw_error_deg: float | None = None
 
     def as_json_dictionary(self) -> dict[str, Any]:
         """JSON 직렬화가 가능한 사전으로 변환한다."""
@@ -81,6 +93,44 @@ def make_run_directory(output_root: Path, started_at: datetime) -> Path:
     return candidate
 
 
+def load_test_cases(path: Path) -> dict[str, dict[str, Any]]:
+    """자연어 입력으로 고정 평가 문항을 조회할 수 있게 읽는다."""
+    cases: dict[str, dict[str, Any]] = {}
+    case_ids: set[str] = set()
+    with path.open(encoding="utf-8") as file:
+        for line_number, line in enumerate(file, start=1):
+            if not line.strip():
+                continue
+            case = json.loads(line)
+            required = {"case_id", "input", "category", "expected_status", "expected_commands", "expected_runtime"}
+            if not isinstance(case, dict) or not required.issubset(case):
+                raise ValueError(f"{line_number}행: 평가 문항 필수 항목 누락")
+            if case["expected_runtime"] not in {"execute", "reject"}:
+                raise ValueError(f"{line_number}행: expected_runtime 오류")
+            if case["input"] in cases or case["case_id"] in case_ids:
+                raise ValueError(f"{line_number}행: 중복 입력 또는 case_id")
+            cases[case["input"]] = case
+            case_ids.add(case["case_id"])
+    return cases
+
+
+def calculate_pose_error(record: SimulationTestRecord) -> None:
+    """목표와 최종 NED 좌표의 오차를 기록한다."""
+    target = record.target_position
+    final = record.final_position
+    if target is None or final is None:
+        return
+    record.position_error_m = round(
+        math.dist((target.x, target.y, target.z), (final.x, final.y, final.z)),
+        3,
+    )
+    yaw_delta = final.yaw_rad - target.yaw_rad
+    record.yaw_error_deg = round(
+        abs(math.degrees(math.atan2(math.sin(yaw_delta), math.cos(yaw_delta)))),
+        2,
+    )
+
+
 def classify_bridge_failure(status: str) -> tuple[str, str]:
     """브리지 거부 메시지를 실패 단계와 사유로 변환한다."""
     if "LLM" in status:
@@ -101,6 +151,7 @@ def is_success_status(status: str) -> bool:
         "착륙 완료",
         "동작 취소 완료",
         "이륙 대기 취소",
+        "긴급 정지 완료",
     )
     return status.startswith(success_prefixes)
 

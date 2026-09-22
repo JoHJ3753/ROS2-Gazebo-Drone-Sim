@@ -21,9 +21,11 @@ from drone_llm.simulation_test_log import JsonlTestWriter
 from drone_llm.simulation_test_log import PositionSnapshot
 from drone_llm.simulation_test_log import SimulationTestRecord
 from drone_llm.simulation_test_log import classify_bridge_failure
+from drone_llm.simulation_test_log import calculate_pose_error
 from drone_llm.simulation_test_log import is_failure_status
 from drone_llm.simulation_test_log import is_success_status
 from drone_llm.simulation_test_log import make_run_directory
+from drone_llm.simulation_test_log import load_test_cases
 
 
 NODE_NAME = "simulation_test_logger"
@@ -58,9 +60,29 @@ class SimulationTestLogger(Node):
         started_at = datetime.now().astimezone()
         run_directory = make_run_directory(output_root, started_at)
         self._writer = JsonlTestWriter(run_directory)
+        self._model_id = str(self.declare_parameter("model_id", "unidentified").value)
+        self._model_sha256 = str(self.declare_parameter("model_sha256", "").value)
+        self._prompt_version = str(self.declare_parameter("prompt_version", "").value)
+        case_file = str(self.declare_parameter("test_cases_file", "").value)
+        self._test_cases = load_test_cases(Path(case_file).expanduser()) if case_file else {}
+        manifest = {
+            "started_at": started_at.isoformat(timespec="seconds"),
+            "model_id": self._model_id,
+            "model_sha256": self._model_sha256 or None,
+            "prompt_version": self._prompt_version or None,
+            "test_cases_file": case_file or None,
+            "coordinate_frame": "PX4 local NED",
+            "note": "목표 좌표는 관측된 최신 trajectory_setpoint이며 실제 PX4 명령 수신 확인은 아님",
+        }
+        (run_directory / "run_manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
         self._current_position: PositionSnapshot | None = None
         self._active_record: SimulationTestRecord | None = None
         self._active_started_monotonic: float | None = None
+        self._llm_received_monotonic: float | None = None
+        self._bridge_published_monotonic: float | None = None
         self._test_sequence = 0
 
         self.create_subscription(
@@ -126,13 +148,23 @@ class SimulationTestLogger(Node):
 
         self._test_sequence += 1
         now = datetime.now().astimezone()
+        input_text = message.data.strip()
+        case = self._test_cases.get(input_text, {})
         self._active_record = SimulationTestRecord(
             timestamp=now.isoformat(timespec="milliseconds"),
             test_id=f"SIM-{self._test_sequence:04d}",
-            natural_language_input=message.data.strip(),
+            natural_language_input=input_text,
             initial_position=self._copy_current_position(),
+            model_id=self._model_id,
+            case_id=case.get("case_id"),
+            category=case.get("category"),
+            expected_status=case.get("expected_status"),
+            expected_commands=case.get("expected_commands"),
+            expected_runtime=case.get("expected_runtime"),
         )
         self._active_started_monotonic = time.monotonic()
+        self._llm_received_monotonic = None
+        self._bridge_published_monotonic = None
         self.get_logger().info(
             f"테스트 시작: {self._active_record.test_id}"
         )
@@ -141,6 +173,12 @@ class SimulationTestLogger(Node):
         """LLM 원문 응답을 활성 테스트에 저장한다."""
         if self._active_record is not None:
             self._active_record.llm_raw_response = message.data
+            self._llm_received_monotonic = time.monotonic()
+            if self._active_started_monotonic is not None:
+                self._active_record.llm_latency_seconds = round(
+                    self._llm_received_monotonic - self._active_started_monotonic,
+                    3,
+                )
 
     def _handle_validated_command(self, message: String) -> None:
         """검증을 통과해 PX4로 전달된 명령을 저장한다."""
@@ -161,6 +199,12 @@ class SimulationTestLogger(Node):
         record.parsed_command = command
         record.validation_result = "passed"
         record.bridge_result = "published"
+        self._bridge_published_monotonic = time.monotonic()
+        if self._llm_received_monotonic is not None:
+            record.bridge_latency_seconds = round(
+                self._bridge_published_monotonic - self._llm_received_monotonic,
+                3,
+            )
         record.px4_command = {
             "topic": VALIDATED_COMMAND_TOPIC,
             "payload": command,
@@ -175,6 +219,11 @@ class SimulationTestLogger(Node):
         failure_stage, failure_reason = classify_bridge_failure(message.data)
         record.validation_result = "rejected"
         record.bridge_result = "rejected"
+        if self._llm_received_monotonic is not None:
+            record.bridge_latency_seconds = round(
+                time.monotonic() - self._llm_received_monotonic,
+                3,
+            )
         self._finish_record(
             result="rejected",
             failure_stage=failure_stage,
@@ -265,6 +314,11 @@ class SimulationTestLogger(Node):
             return
 
         record.final_position = self._copy_current_position()
+        if self._bridge_published_monotonic is not None:
+            record.flight_latency_seconds = round(
+                time.monotonic() - self._bridge_published_monotonic,
+                3,
+            )
         record.elapsed_seconds = round(
             time.monotonic() - started_monotonic,
             3,
@@ -272,12 +326,15 @@ class SimulationTestLogger(Node):
         record.result = result
         record.failure_stage = failure_stage
         record.failure_reason = failure_reason
+        calculate_pose_error(record)
         self._writer.append(record)
         self.get_logger().info(
             f"테스트 저장 완료: {record.test_id}, result={result}"
         )
         self._active_record = None
         self._active_started_monotonic = None
+        self._llm_received_monotonic = None
+        self._bridge_published_monotonic = None
 
     def _copy_current_position(self) -> PositionSnapshot | None:
         """변경 가능한 최신 좌표를 독립적인 값 객체로 복사한다."""
