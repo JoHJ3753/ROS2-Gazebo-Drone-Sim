@@ -1,22 +1,22 @@
 {
   "baseline": {
     "samples": 20,
-    "json_parse": 85.0,
-    "schema_valid": 75.0,
+    "json_parse": 90.0,
+    "schema_valid": 70.0,
     "status_match": 50.0,
-    "command_match": 45.0,
-    "parameter_match": 35.0,
-    "exact_match": 15.0,
+    "command_match": 55.0,
+    "parameter_match": 50.0,
+    "exact_match": 30.0,
     "hanja_free": 100.0,
     "categories": {
       "numeric": {
         "samples": 2,
-        "json_parse": 50.0,
-        "schema_valid": 50.0,
-        "status_match": 50.0,
-        "command_match": 50.0,
-        "parameter_match": 0.0,
-        "exact_match": 0.0,
+        "json_parse": 100.0,
+        "schema_valid": 100.0,
+        "status_match": 100.0,
+        "command_match": 100.0,
+        "parameter_match": 100.0,
+        "exact_match": 100.0,
         "hanja_free": 100.0
       },
       "relative_position": {
@@ -25,16 +25,16 @@
         "schema_valid": 100.0,
         "status_match": 100.0,
         "command_match": 100.0,
-        "parameter_match": 50.0,
-        "exact_match": 50.0,
+        "parameter_match": 100.0,
+        "exact_match": 100.0,
         "hanja_free": 100.0
       },
       "compound": {
         "samples": 5,
-        "json_parse": 100.0,
-        "schema_valid": 100.0,
+        "json_parse": 80.0,
+        "schema_valid": 80.0,
         "status_match": 80.0,
-        "command_match": 40.0,
+        "command_match": 60.0,
         "parameter_match": 40.0,
         "exact_match": 40.0,
         "hanja_free": 100.0
@@ -51,9 +51,9 @@
       },
       "ambiguous_or_impossible": {
         "samples": 9,
-        "json_parse": 77.78,
-        "schema_valid": 66.67,
-        "status_match": 22.22,
+        "json_parse": 88.89,
+        "schema_valid": 55.56,
+        "status_match": 11.11,
         "command_match": 33.33,
         "parameter_match": 33.33,
         "exact_match": 0.0,
@@ -76,9 +76,9 @@
     "json_parse": 100.0,
     "schema_valid": 100.0,
     "status_match": 85.0,
-    "command_match": 85.0,
-    "parameter_match": 85.0,
-    "exact_match": 50.0,
+    "command_match": 90.0,
+    "parameter_match": 90.0,
+    "exact_match": 55.0,
     "hanja_free": 100.0,
     "categories": {
       "numeric": {
@@ -86,9 +86,9 @@
         "json_parse": 100.0,
         "schema_valid": 100.0,
         "status_match": 100.0,
-        "command_match": 50.0,
-        "parameter_match": 50.0,
-        "exact_match": 50.0,
+        "command_match": 100.0,
+        "parameter_match": 100.0,
+        "exact_match": 100.0,
         "hanja_free": 100.0
       },
       "relative_position": {
@@ -142,5 +142,27 @@
         "hanja_free": 100.0
       }
     }
+  },
+  "robustness_baseline": {
+    "samples": 0,
+    "json_parse": 0.0,
+    "schema_valid": 0.0,
+    "status_match": 0.0,
+    "command_match": 0.0,
+    "parameter_match": 0.0,
+    "exact_match": 0.0,
+    "hanja_free": 0.0,
+    "categories": {}
+  },
+  "robustness_fine_tuned": {
+    "samples": 0,
+    "json_parse": 0.0,
+    "schema_valid": 0.0,
+    "status_match": 0.0,
+    "command_match": 0.0,
+    "parameter_match": 0.0,
+    "exact_match": 0.0,
+    "hanja_free": 0.0,
+    "categories": {}
   }
 }
