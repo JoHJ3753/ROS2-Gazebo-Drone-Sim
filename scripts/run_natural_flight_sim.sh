@@ -69,7 +69,7 @@ terminal_args=(
 
   --tab
   --title="5 LLM Bridge"
-  --command="bash -lc 'export ROS_DOMAIN_ID=${ROS_DOMAIN_ID}; cd \"${PROJECT_DIR}\"; source /opt/ros/humble/setup.bash; source install/local_setup.bash; ros2 launch drone_llm llm_service.launch.py; exec bash'"
+  --command="bash -lc 'export ROS_DOMAIN_ID=${ROS_DOMAIN_ID}; cd \"${PROJECT_DIR}\"; source /opt/ros/humble/setup.bash; source install/local_setup.bash; nice -n 10 ros2 launch drone_llm llm_service.launch.py; exec bash'"
 
   --tab
   --title="6 Natural CLI"
