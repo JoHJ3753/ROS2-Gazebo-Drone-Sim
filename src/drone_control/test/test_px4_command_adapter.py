@@ -489,12 +489,24 @@ class RuntimeMoveAdapterStub:
         self.logger = FakeLogger()
         self.status_message_fresh = True
         self.force_disarm_request_count = 0
+        self.arm_request_count = 0
 
     def _messages_are_fresh(self):
         return self.messages_fresh
 
     def _is_offboard_and_armed(self):
         return self.offboard_and_armed
+
+    def _is_vehicle_ready(self):
+        """테스트 기체의 현재 시동 준비 상태를 반환한다."""
+        return is_vehicle_ready(
+            self._vehicle_local_position,
+            self._vehicle_status,
+        )
+
+    def _request_arm(self):
+        """일반 Arm 요청 횟수를 기록한다."""
+        self.arm_request_count += 1
 
     def _publish_flight_status(self, status: str) -> None:
         """실제 ROS 발행 대신 상태 알림을 기록한다."""
@@ -1136,9 +1148,124 @@ def test_takeoff_wait_tolerates_transient_ineligible_state(monkeypatch):
     assert adapter.flight_statuses == []
 
 
+def test_runtime_arm_requests_px4_arm():
+    """준비된 지상 기체에 독립 시동을 요청한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.IDLE
+
+    Px4CommandAdapter.arm(adapter)
+
+    assert adapter._state is AdapterState.ARMING
+    assert adapter.arm_request_count == 1
+    assert adapter._command_retry_counter == 0
+    assert adapter.flight_statuses == [
+        "시동 중: PX4 시동 요청"
+    ]
+
+
+def test_runtime_arm_requires_idle_state():
+    """명령 대기 상태가 아니면 독립 시동을 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+
+    with pytest.raises(
+        RuntimeError,
+        match="requires the adapter to be idle",
+    ):
+        Px4CommandAdapter.arm(adapter)
+
+
+def test_runtime_arm_rejects_stale_vehicle_data():
+    """PX4 데이터가 오래됐으면 독립 시동을 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.IDLE
+    adapter.messages_fresh = False
+
+    with pytest.raises(
+        RuntimeError,
+        match="message is stale",
+    ):
+        Px4CommandAdapter.arm(adapter)
+
+
+def test_runtime_arm_requires_ready_vehicle():
+    """기체 준비 조건을 통과하지 못하면 시동하지 않는다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.IDLE
+    adapter._vehicle_status.pre_flight_checks_pass = False
+
+    with pytest.raises(
+        RuntimeError,
+        match="not ready for arming",
+    ):
+        Px4CommandAdapter.arm(adapter)
+
+
+def test_runtime_arm_completes_after_armed_status():
+    """PX4 Armed 상태가 확인되면 독립 시동을 완료한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.ARMING
+    adapter._vehicle_status.arming_state = (
+        VehicleStatus.ARMING_STATE_ARMED
+    )
+
+    Px4CommandAdapter._handle_arming(adapter)
+
+    assert adapter._state is AdapterState.ARMED
+    assert adapter._command_retry_counter == 0
+    assert adapter.flight_statuses == [
+        "시동 완료: 모터 활성화 확인"
+    ]
+
+
+def test_runtime_arm_retries_px4_request():
+    """시동 상태가 확인되지 않으면 Arm 명령을 재전송한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.ARMING
+    adapter._command_retry_counter = (
+        COMMAND_RETRY_INTERVAL_TICKS - 1
+    )
+
+    Px4CommandAdapter._handle_arming(adapter)
+
+    assert adapter._state is AdapterState.ARMING
+    assert adapter.arm_request_count == 1
+    assert adapter._command_retry_counter == 0
+
+
+def test_runtime_armed_state_returns_to_idle_after_disarm():
+    """PX4 자동 Disarm이 확인되면 다시 명령 대기 상태가 된다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.ARMED
+
+    Px4CommandAdapter._monitor_armed_state(adapter)
+
+    assert adapter._state is AdapterState.IDLE
+    assert adapter.flight_statuses == [
+        "시동 해제 감지: 다음 명령 대기"
+    ]
+
+
+def test_arm_request_uses_px4_arm_command():
+    """일반 Arm 요청에 강제 시동 해제 값을 사용하지 않는다."""
+    adapter = VehicleCommandPublisherStub()
+
+    Px4CommandAdapter._request_arm(adapter)
+
+    assert adapter.commands == [
+        {
+            "command": (
+                VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM
+            ),
+            "param1": 1.0,
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     "active_state",
     [
+        AdapterState.ARMING,
+        AdapterState.ARMED,
         AdapterState.STREAMING_SETPOINTS,
         AdapterState.REQUESTING_OFFBOARD,
         AdapterState.TAKING_OFF,

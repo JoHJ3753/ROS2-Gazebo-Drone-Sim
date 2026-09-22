@@ -334,6 +334,8 @@ class AdapterState(Enum):
 
     WAITING_FOR_READY = "waiting_for_ready"
     IDLE = "idle"
+    ARMING = "arming"
+    ARMED = "armed"
     WAITING_FOR_TAKEOFF_STABILITY = "waiting_for_takeoff_stability"
     STREAMING_SETPOINTS = "streaming_setpoints"
     REQUESTING_OFFBOARD = "requesting_offboard"
@@ -603,9 +605,31 @@ class Px4CommandAdapter(Node):
         )
 
     def arm(self) -> None:
-        """독립 시동 명령은 아직 지원하지 않는다."""
-        raise RuntimeError(
-            "Standalone arm command is not implemented"
+        """안전 조건을 확인하고 PX4에 독립 시동을 요청한다."""
+        if self._state is not AdapterState.IDLE:
+            raise RuntimeError(
+                "Arm command requires the adapter to be idle"
+            )
+
+        if not self._messages_are_fresh():
+            raise RuntimeError(
+                "PX4 position or status message is stale"
+            )
+
+        if not self._is_vehicle_ready():
+            raise RuntimeError(
+                "Vehicle is not ready for arming"
+            )
+
+        self._command_retry_counter = 0
+        self._state = AdapterState.ARMING
+        self._request_arm()
+
+        self.get_logger().info(
+            "Arm command accepted. Waiting for PX4 armed state."
+        )
+        self._publish_flight_status(
+            "시동 중: PX4 시동 요청"
         )
 
     def disarm(self) -> None:
@@ -1067,6 +1091,14 @@ class Px4CommandAdapter(Node):
                 )
                 return
 
+        if self._state is AdapterState.ARMING:
+            self._handle_arming()
+            return
+
+        if self._state is AdapterState.ARMED:
+            self._monitor_armed_state()
+            return
+
         if (
             self._state
             is AdapterState.WAITING_FOR_TAKEOFF_STABILITY
@@ -1214,6 +1246,52 @@ class Px4CommandAdapter(Node):
         return (
             self._start_stability_counter
             >= START_STABILITY_REQUIRED_TICKS
+        )
+
+    def _handle_arming(self) -> None:
+        """PX4 시동 완료를 확인하고 유실된 명령을 재전송한다."""
+        status = self._vehicle_status
+
+        if (
+            status is not None
+            and status.arming_state
+            == VehicleStatus.ARMING_STATE_ARMED
+        ):
+            self._command_retry_counter = 0
+            self._state = AdapterState.ARMED
+
+            self.get_logger().info(
+                "Arm completed. Vehicle is armed."
+            )
+            self._publish_flight_status(
+                "시동 완료: 모터 활성화 확인"
+            )
+            return
+
+        self._command_retry_counter += 1
+
+        if (
+            self._command_retry_counter
+            < COMMAND_RETRY_INTERVAL_TICKS
+        ):
+            return
+
+        self._request_arm()
+        self._command_retry_counter = 0
+
+    def _monitor_armed_state(self) -> None:
+        """독립 시동 후 PX4의 자동 Disarm 상태를 감시한다."""
+        if not is_vehicle_disarmed(self._vehicle_status):
+            return
+
+        self._command_retry_counter = 0
+        self._state = AdapterState.IDLE
+
+        self.get_logger().info(
+            "Vehicle was disarmed after standalone arm."
+        )
+        self._publish_flight_status(
+            "시동 해제 감지: 다음 명령 대기"
         )
 
     def _handle_emergency_stop(self) -> None:
@@ -1909,6 +1987,17 @@ class Px4CommandAdapter(Node):
     def _is_offboard_and_armed(self) -> bool:
         """PX4가 Offboard 비행 모드이며 시동 상태인지 확인한다."""
         return is_offboard_and_armed(self._vehicle_status)
+
+    def _request_arm(self) -> None:
+        """PX4에 일반 시동을 요청한다."""
+        self._publish_vehicle_command(
+            command=VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM,
+            param1=1.0,
+        )
+
+        self.get_logger().info(
+            "Requested PX4 vehicle arm."
+        )
 
     def _request_offboard_and_arm(self) -> None:
         """PX4에 Offboard 모드 전환과 시동을 요청한다."""
