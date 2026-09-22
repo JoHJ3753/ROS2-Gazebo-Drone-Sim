@@ -31,6 +31,10 @@ class FakeDroneCommandHandler:
         """착륙 호출을 기록한다."""
         self.calls.append(("land",))
 
+    def return_home(self) -> None:
+        """홈 복귀 호출을 기록한다."""
+        self.calls.append(("return_home",))
+
     def move_drone(
         self,
         direction: str,
@@ -75,6 +79,10 @@ class FakeDroneCommandHandler:
             ("takeoff", 2.0),
         ),
         ({"name": "land", "arguments": {}}, ("land",)),
+        (
+            {"name": "return_home", "arguments": {}},
+            ("return_home",),
+        ),
         (
             {
                 "name": "move_drone",
@@ -148,7 +156,6 @@ def test_execute_routes_valid_command(
         {"name": "arm", "arguments": {}, "extra": True},
         {"name": 1, "arguments": {}},
         {"name": "arm", "arguments": []},
-        {"name": "return_home", "arguments": {}},
     ],
 )
 def test_execute_rejects_invalid_command_structure(command: Any) -> None:
@@ -184,6 +191,10 @@ def test_execute_rejects_invalid_command_structure(command: Any) -> None:
             "arguments": {"unexpected": 1},
         },
         {"name": "cancel", "arguments": {"unexpected": 1}},
+        {
+            "name": "return_home",
+            "arguments": {"unexpected": 1},
+        },
         {
             "name": "emergency_stop",
             "arguments": {"unexpected": 1},

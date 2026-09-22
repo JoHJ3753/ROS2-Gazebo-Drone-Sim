@@ -26,6 +26,9 @@ class DroneCommandHandler(Protocol):
     def land(self) -> None:
         """현재 위치에서 착륙한다."""
 
+    def return_home(self) -> None:
+        """PX4 Return 모드로 홈 위치에 복귀한다."""
+
     def move_drone(
         self,
         direction: str,
@@ -57,6 +60,7 @@ _SUPPORTED_COMMAND_NAMES = frozenset(
         "disarm",
         "takeoff",
         "land",
+        "return_home",
         "move_drone",
         "rotate_relative",
         "hover",
@@ -105,6 +109,15 @@ class CommandExecutor:
         if command_name == "land":
             self._require_arguments(arguments, required=set(), optional=set())
             self._handler.land()
+            return
+
+        if command_name == "return_home":
+            self._require_arguments(
+                arguments,
+                required=set(),
+                optional=set(),
+            )
+            self._handler.return_home()
             return
 
         if command_name == "move_drone":

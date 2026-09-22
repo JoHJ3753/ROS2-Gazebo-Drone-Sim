@@ -490,6 +490,7 @@ class RuntimeMoveAdapterStub:
         self.status_message_fresh = True
         self.force_disarm_request_count = 0
         self.arm_request_count = 0
+        self.return_home_request_count = 0
 
     def _messages_are_fresh(self):
         return self.messages_fresh
@@ -507,6 +508,10 @@ class RuntimeMoveAdapterStub:
     def _request_arm(self):
         """일반 Arm 요청 횟수를 기록한다."""
         self.arm_request_count += 1
+
+    def _request_return_home(self):
+        """Return to Launch 요청 횟수를 기록한다."""
+        self.return_home_request_count += 1
 
     def _publish_flight_status(self, status: str) -> None:
         """실제 ROS 발행 대신 상태 알림을 기록한다."""
@@ -1257,6 +1262,132 @@ def test_arm_request_uses_px4_arm_command():
                 VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM
             ),
             "param1": 1.0,
+        }
+    ]
+
+
+def test_runtime_return_home_requests_px4_rtl():
+    """호버링 중인 기체에 PX4 Return 모드를 요청한다."""
+    adapter = RuntimeMoveAdapterStub()
+
+    Px4CommandAdapter.return_home(adapter)
+
+    assert adapter._state is AdapterState.RETURNING_HOME
+    assert adapter.return_home_request_count == 1
+    assert adapter._command_retry_counter == 0
+    assert adapter.flight_statuses == [
+        "홈 복귀 중: PX4 Return 모드 요청"
+    ]
+
+
+def test_runtime_return_home_requires_holding_state():
+    """호버링 상태가 아니면 홈 복귀를 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.IDLE
+
+    with pytest.raises(
+        RuntimeError,
+        match="requires the adapter to be holding",
+    ):
+        Px4CommandAdapter.return_home(adapter)
+
+
+def test_runtime_return_home_rejects_stale_vehicle_data():
+    """PX4 데이터가 오래됐으면 홈 복귀를 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter.messages_fresh = False
+
+    with pytest.raises(
+        RuntimeError,
+        match="message is stale",
+    ):
+        Px4CommandAdapter.return_home(adapter)
+
+
+def test_runtime_return_home_requires_armed_offboard_vehicle():
+    """Armed 및 Offboard 상태가 아니면 홈 복귀를 거부한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter.offboard_and_armed = False
+
+    with pytest.raises(
+        RuntimeError,
+        match="armed Offboard vehicle",
+    ):
+        Px4CommandAdapter.return_home(adapter)
+
+
+def test_runtime_return_home_waits_while_px4_is_in_rtl():
+    """PX4가 RTL 모드이면 복귀 완료까지 기다린다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.RETURNING_HOME
+    adapter._vehicle_status.arming_state = (
+        VehicleStatus.ARMING_STATE_ARMED
+    )
+    adapter._vehicle_status.nav_state = (
+        VehicleStatus.NAVIGATION_STATE_AUTO_RTL
+    )
+    adapter._command_retry_counter = 3
+
+    Px4CommandAdapter._handle_return_home(adapter)
+
+    assert adapter._state is AdapterState.RETURNING_HOME
+    assert adapter.return_home_request_count == 0
+    assert adapter._command_retry_counter == 0
+    assert adapter.flight_statuses == []
+
+
+def test_runtime_return_home_completes_after_disarm():
+    """RTL 착륙 후 Disarm이 확인되면 복귀를 완료한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.RETURNING_HOME
+    adapter._vehicle_status.arming_state = (
+        VehicleStatus.ARMING_STATE_DISARMED
+    )
+
+    Px4CommandAdapter._handle_return_home(adapter)
+
+    assert adapter._state is AdapterState.LANDED
+    assert adapter._target_position is None
+    assert adapter._mission_target_position is None
+    assert adapter._coordinate_calculator is None
+    assert adapter._command_retry_counter == 0
+    assert adapter.flight_statuses == [
+        "홈 복귀 완료: 착륙 및 시동 해제 확인"
+    ]
+
+
+def test_runtime_return_home_retries_px4_request():
+    """RTL 전환 전에는 Return 명령을 주기적으로 재전송한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._state = AdapterState.RETURNING_HOME
+    adapter._vehicle_status.arming_state = (
+        VehicleStatus.ARMING_STATE_ARMED
+    )
+    adapter._vehicle_status.nav_state = (
+        VehicleStatus.NAVIGATION_STATE_POSCTL
+    )
+    adapter._command_retry_counter = (
+        COMMAND_RETRY_INTERVAL_TICKS - 1
+    )
+
+    Px4CommandAdapter._handle_return_home(adapter)
+
+    assert adapter._state is AdapterState.RETURNING_HOME
+    assert adapter.return_home_request_count == 1
+    assert adapter._command_retry_counter == 0
+
+
+def test_return_home_request_uses_px4_rtl_command():
+    """홈 복귀 요청에 PX4 Return to Launch 명령을 사용한다."""
+    adapter = VehicleCommandPublisherStub()
+
+    Px4CommandAdapter._request_return_home(adapter)
+
+    assert adapter.commands == [
+        {
+            "command": (
+                VehicleCommand.VEHICLE_CMD_NAV_RETURN_TO_LAUNCH
+            ),
         }
     ]
 

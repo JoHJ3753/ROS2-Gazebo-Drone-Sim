@@ -45,7 +45,6 @@ CONTROL_PERIOD_SECONDS = 0.1
 SETPOINT_STREAM_COUNT = 20
 COMMAND_RETRY_INTERVAL_TICKS = 10
 
-REQUIRED_ROS_DOMAIN_ID = 42
 MESSAGE_FRESHNESS_TIMEOUT_SECONDS = 1.0
 START_STABILITY_REQUIRED_TICKS = 20
 TAKEOFF_STABILITY_REQUIRED_TICKS = 10
@@ -344,6 +343,7 @@ class AdapterState(Enum):
     ROTATING = "rotating"
     HOLDING = "holding"
     HOVERING = "hovering"
+    RETURNING_HOME = "returning_home"
     LANDING = "landing"
     LANDED = "landed"
     EMERGENCY_STOPPING = "emergency_stopping"
@@ -370,13 +370,24 @@ class Px4CommandAdapter(Node):
         """PX4 발행자, 구독자와 제어 타이머를 생성한다."""
         super().__init__(NODE_NAME)
 
-        actual_domain_id = os.environ.get("ROS_DOMAIN_ID", "0")
+        actual_domain_id = os.environ.get("ROS_DOMAIN_ID")
 
-        if actual_domain_id != str(REQUIRED_ROS_DOMAIN_ID):
+        if actual_domain_id is None:
             raise RuntimeError(
-                "ROS_DOMAIN_ID must be "
-                f"{REQUIRED_ROS_DOMAIN_ID}, "
-                f"but received {actual_domain_id}"
+                "ROS_DOMAIN_ID must be set before starting "
+                "the PX4 adapter"
+            )
+
+        try:
+            domain_id = int(actual_domain_id)
+        except ValueError as error:
+            raise RuntimeError(
+                "ROS_DOMAIN_ID must be an integer"
+            ) from error
+
+        if not 0 <= domain_id <= 232:
+            raise RuntimeError(
+                "ROS_DOMAIN_ID must be between 0 and 232"
             )
 
         # 현재는 시뮬레이션 검증을 위해 ROS 2 파라미터로 목표를 받는다.
@@ -665,6 +676,37 @@ class Px4CommandAdapter(Node):
             "Waiting for PX4 landing and disarm."
         )
         self._publish_flight_status("착륙 중: PX4 자동 착륙 요청")
+
+    def return_home(self) -> None:
+        """호버링 상태에서 PX4 Return 모드를 요청한다."""
+        if self._state is not AdapterState.HOLDING:
+            raise RuntimeError(
+                "Return home command requires the adapter to be holding"
+            )
+
+        if not self._messages_are_fresh():
+            raise RuntimeError(
+                "PX4 position or status message is stale"
+            )
+
+        if not self._is_offboard_and_armed():
+            raise RuntimeError(
+                "Return home command requires an armed Offboard vehicle"
+            )
+
+        self._command_retry_counter = 0
+        self._state = AdapterState.RETURNING_HOME
+
+        # 첫 번째 복귀 명령은 수신 즉시 발행한다.
+        self._request_return_home()
+
+        self.get_logger().info(
+            "Return home command accepted. "
+            "Waiting for PX4 RTL, landing, and disarm."
+        )
+        self._publish_flight_status(
+            "홈 복귀 중: PX4 Return 모드 요청"
+        )
 
     def move_drone(
         self,
@@ -1090,6 +1132,10 @@ class Px4CommandAdapter(Node):
                     "PX4 entered failsafe. Stopping setpoint output."
                 )
                 return
+
+        if self._state is AdapterState.RETURNING_HOME:
+            self._handle_return_home()
+            return
 
         if self._state is AdapterState.ARMING:
             self._handle_arming()
@@ -1888,6 +1934,57 @@ class Px4CommandAdapter(Node):
             "Offboard mode or armed state was lost while holding."
         )
 
+    def _handle_return_home(self) -> None:
+        """PX4 RTL 전환과 복귀 후 Disarm 완료를 확인한다."""
+        status = self._vehicle_status
+
+        if status is None:
+            return
+
+        if is_vehicle_disarmed(status):
+            self._target_position = None
+            self._mission_target_position = None
+            self._coordinate_calculator = None
+            self._hover_deadline_monotonic = None
+            self._command_retry_counter = 0
+            self._state = AdapterState.LANDED
+
+            self.get_logger().info(
+                "Return home completed. Vehicle is disarmed."
+            )
+            self._publish_flight_status(
+                "홈 복귀 완료: 착륙 및 시동 해제 확인"
+            )
+            return
+
+        if (
+            status.nav_state
+            == VehicleStatus.NAVIGATION_STATE_AUTO_RTL
+        ):
+            # PX4가 RTL 명령을 수락했으므로 재전송하지 않는다.
+            self._command_retry_counter = 0
+            return
+
+        # PX4가 아직 Offboard인 동안에는 복귀 명령이 유실되더라도
+        # 제어가 갑자기 끊기지 않도록 기존 Setpoint를 유지한다.
+        if (
+            status.nav_state
+            == VehicleStatus.NAVIGATION_STATE_OFFBOARD
+        ):
+            self._publish_offboard_control_mode()
+            self._publish_target_position()
+
+        self._command_retry_counter += 1
+
+        if (
+            self._command_retry_counter
+            < COMMAND_RETRY_INTERVAL_TICKS
+        ):
+            return
+
+        self._request_return_home()
+        self._command_retry_counter = 0
+
     def _handle_landing(self) -> None:
         """PX4 착륙 진행 상태를 감시하고 Disarm 완료를 확인한다."""
         status = self._vehicle_status
@@ -2013,6 +2110,18 @@ class Px4CommandAdapter(Node):
 
         self.get_logger().info(
             "Requested Offboard mode and vehicle arm."
+        )
+
+    def _request_return_home(self) -> None:
+        """PX4에 Return to Launch 모드 전환을 요청한다."""
+        self._publish_vehicle_command(
+            command=(
+                VehicleCommand.VEHICLE_CMD_NAV_RETURN_TO_LAUNCH
+            ),
+        )
+
+        self.get_logger().info(
+            "Requested PX4 Return to Launch."
         )
 
     def _request_land(self) -> None:
