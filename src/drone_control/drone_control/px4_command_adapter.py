@@ -49,10 +49,11 @@ REQUIRED_ROS_DOMAIN_ID = 42
 MESSAGE_FRESHNESS_TIMEOUT_SECONDS = 1.0
 START_STABILITY_REQUIRED_TICKS = 20
 TAKEOFF_STABILITY_REQUIRED_TICKS = 10
+TAKEOFF_STABILITY_UNSTABLE_PENALTY_TICKS = 2
 TAKEOFF_STABILITY_TIMEOUT_SECONDS = 30.0
 
 MAX_START_HORIZONTAL_SPEED_MPS = 0.15
-MAX_START_VERTICAL_SPEED_MPS = 0.10
+MAX_START_VERTICAL_SPEED_MPS = 0.25
 MAX_START_HEADING_DRIFT_DEG = 3.0
 
 EXPECTED_COMMAND_PUBLISHER_COUNT = 1
@@ -1298,7 +1299,11 @@ class Px4CommandAdapter(Node):
         if not is_vehicle_speed_stable(
             self._vehicle_local_position
         ):
-            self._takeoff_stability_counter = 0
+            self._takeoff_stability_counter = max(
+                0,
+                self._takeoff_stability_counter
+                - TAKEOFF_STABILITY_UNSTABLE_PENALTY_TICKS,
+            )
             return
 
         self._takeoff_stability_counter += 1

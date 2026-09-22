@@ -25,6 +25,7 @@ from drone_control.px4_command_adapter import (
     PX4_FORCE_DISARM_MAGIC,
     TAKEOFF_STABILITY_REQUIRED_TICKS,
     TAKEOFF_STABILITY_TIMEOUT_SECONDS,
+    TAKEOFF_STABILITY_UNSTABLE_PENALTY_TICKS,
 )
 
 
@@ -376,7 +377,7 @@ def test_vehicle_is_not_ready_with_unsafe_status(
         ("v_z_valid", False),
         ("vx", 0.16),
         ("vy", 0.16),
-        ("vz", 0.11),
+        ("vz", 0.26),
         ("heading", float("nan")),
     ],
 )
@@ -408,7 +409,7 @@ def test_vehicle_ready_does_not_depend_on_heading_good_flag():
 def test_takeoff_eligibility_allows_transient_speed_noise():
     """기본 안전 상태는 순간적인 속도 초과와 별도로 판정한다."""
     position = make_valid_position()
-    position.vz = 0.11
+    position.vz = 0.26
     status = make_ready_status()
 
     assert is_vehicle_takeoff_eligible(position, status)
@@ -420,9 +421,9 @@ def test_takeoff_eligibility_allows_transient_speed_noise():
     ("vx", "vy", "vz", "expected"),
     [
         (0.0, 0.0, 0.0, True),
-        (0.15, 0.0, 0.10, True),
+        (0.15, 0.0, 0.25, True),
         (0.16, 0.0, 0.0, False),
-        (0.0, 0.0, 0.11, False),
+        (0.0, 0.0, 0.26, False),
     ],
 )
 def test_vehicle_speed_stability_uses_configured_limits(
@@ -977,7 +978,7 @@ def test_runtime_takeoff_waits_for_stable_speed(monkeypatch):
     """이륙 명령은 순간 속도 초과 시 거부되지 않고 대기한다."""
     adapter = RuntimeMoveAdapterStub()
     adapter._state = AdapterState.IDLE
-    adapter._vehicle_local_position.vz = 0.11
+    adapter._vehicle_local_position.vz = 0.26
     monkeypatch.setattr(
         "drone_control.px4_command_adapter.time.monotonic",
         lambda: 100.0,
@@ -1005,14 +1006,14 @@ def test_runtime_takeoff_waits_for_stable_speed(monkeypatch):
     ]
 
 
-def test_takeoff_stability_wait_resets_on_unstable_sample(monkeypatch):
-    """불안정한 속도 표본이 들어오면 연속 카운트를 초기화한다."""
+def test_takeoff_stability_wait_penalizes_unstable_sample(monkeypatch):
+    """순간적인 속도 노이즈는 안정화 진행을 일부만 감소시킨다."""
     adapter = RuntimeMoveAdapterStub()
     adapter._state = AdapterState.WAITING_FOR_TAKEOFF_STABILITY
     adapter._pending_takeoff_altitude_m = 2.0
     adapter._takeoff_stability_counter = 5
     adapter._takeoff_stability_deadline_monotonic = 115.0
-    adapter._vehicle_local_position.vz = 0.11
+    adapter._vehicle_local_position.vz = 0.26
     monkeypatch.setattr(
         "drone_control.px4_command_adapter.time.monotonic",
         lambda: 101.0,
@@ -1024,7 +1025,9 @@ def test_takeoff_stability_wait_resets_on_unstable_sample(monkeypatch):
         adapter._state
         is AdapterState.WAITING_FOR_TAKEOFF_STABILITY
     )
-    assert adapter._takeoff_stability_counter == 0
+    assert adapter._takeoff_stability_counter == (
+        5 - TAKEOFF_STABILITY_UNSTABLE_PENALTY_TICKS
+    )
 
 
 def test_takeoff_starts_after_consecutive_stable_samples(monkeypatch):
