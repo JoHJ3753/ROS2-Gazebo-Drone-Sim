@@ -56,8 +56,8 @@ terminal_args=(
   --command="bash -lc 'export ROS_DOMAIN_ID=${ROS_DOMAIN_ID}; MicroXRCEAgent udp4 -p 8888; exec bash'"
 
   --tab
-  --title="2 Gazebo"
-  --command="bash -lc 'source \"${GZ_ENV_FILE}\"; gz sim --verbose=1 -r \"${GZ_WORLD_FILE}\"; exec bash'"
+  --title="2 LLM Warmup + Gazebo"
+  --command="bash -lc 'export ROS_DOMAIN_ID=${ROS_DOMAIN_ID}; cd \"${PROJECT_DIR}\"; source /opt/ros/humble/setup.bash; source install/local_setup.bash; until ros2 service type /ask_llm 2>/dev/null | grep -qx llm_ros2/srv/AskLLM; do sleep 1; done; echo \"LLM 첫 응답 예열 중...\"; time ros2 service call /ask_llm llm_ros2/srv/AskLLM \"{question: 착륙해}\"; echo \"LLM 예열 완료. Gazebo를 시작합니다.\"; source \"${GZ_ENV_FILE}\"; gz sim --verbose=1 -r \"${GZ_WORLD_FILE}\"; exec bash'"
 
   --tab
   --title="3 PX4"
@@ -73,14 +73,14 @@ terminal_args=(
 
   --tab
   --title="6 Natural CLI"
-  --command="bash -lc 'export ROS_DOMAIN_ID=${ROS_DOMAIN_ID}; cd \"${PROJECT_DIR}\"; source /opt/ros/humble/setup.bash; source install/local_setup.bash; until ros2 service type /ask_llm 2>/dev/null | grep -qx llm_ros2/srv/AskLLM; do sleep 1; done; until ros2 node list 2>/dev/null | grep -qx /px4_command_adapter; do sleep 1; done; echo \"LLM 첫 응답 예열 중...\"; ros2 service call /ask_llm llm_ros2/srv/AskLLM \"{question: 착륙해}\"; ros2 run drone_llm drone_cli; exec bash'"
+  --command="bash -lc 'export ROS_DOMAIN_ID=${ROS_DOMAIN_ID}; cd \"${PROJECT_DIR}\"; source /opt/ros/humble/setup.bash; source install/local_setup.bash; until ros2 node list 2>/dev/null | grep -qx /px4_command_adapter; do sleep 1; done; echo \"PX4 어댑터 준비 대기 중...\"; until ros2 topic echo --once /drone/flight_status std_msgs/msg/String 2>/dev/null | grep -q \"명령 대기 중: 기체 상태 정상\"; do sleep 1; done; ros2 run drone_llm drone_cli; exec bash'"
 )
 
 if [[ -x "${QGC_APPIMAGE}" ]]; then
   terminal_args+=(
     --tab
     --title="7 QGroundControl"
-    --command="bash -lc '\"${QGC_APPIMAGE}\"; exec bash'"
+    --command="bash -lc 'source \"${GZ_ENV_FILE}\"; until gz service -l 2>/dev/null | grep -qx /world/test_world/create; do sleep 1; done; \"${QGC_APPIMAGE}\"; exec bash'"
   )
 else
   echo "경고: QGroundControl을 찾지 못해 실행하지 않습니다." >&2

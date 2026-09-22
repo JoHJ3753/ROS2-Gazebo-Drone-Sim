@@ -1,8 +1,8 @@
 llm_service:
   ros__parameters:
     model_path: "model/v0.4-Q4_K_M.gguf"
-    context_size: 16384
+    context_size: 4096
     threads: 4
-    max_tokens: 256
+    max_tokens: 128
     timeout_seconds: 120
     temperature: 0.0
