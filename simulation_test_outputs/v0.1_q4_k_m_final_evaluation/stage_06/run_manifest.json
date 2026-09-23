@@ -1,0 +1,9 @@
+{
+  "started_at": "2026-09-23T15:59:43+09:00",
+  "model_id": "v0.1-Q4_K_M",
+  "model_sha256": null,
+  "prompt_version": "d3d04b1",
+  "test_cases_file": "/home/hkit/arion_drone/analysis/simulation_cases_example.jsonl",
+  "coordinate_frame": "PX4 local NED",
+  "note": "목표 좌표는 관측된 최신 trajectory_setpoint이며 실제 PX4 명령 수신 확인은 아님"
+}

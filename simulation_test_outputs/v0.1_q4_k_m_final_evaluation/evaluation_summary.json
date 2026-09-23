@@ -1,0 +1,14 @@
+{
+  "model_id": "v0.1-Q4_K_M",
+  "stage_01_safe_non_execution": "14/14",
+  "stage_02_arm": "success",
+  "stage_03_recall": "success",
+  "stage_04_cancel": "success",
+  "stage_05_land": "success",
+  "stage_06_emergency_stop": "success",
+  "stage_07_emergency_priority": "success",
+  "known_failure": {
+    "input": "앞으로 일 점 이 미터만 가줘",
+    "result": "clarification_required"
+  }
+}
