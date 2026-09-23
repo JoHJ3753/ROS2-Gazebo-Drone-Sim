@@ -29,4 +29,24 @@ python3 analysis/analyze_simulation_tests.py \
 
 `case_scores.csv`는 문항별 명령/파라미터/전체 해석, 안전 거부 또는 실행, 단계별 지연, 위치 오차를 담는다. `model_summary.csv`는 채점 가능한 문항만 분모로 사용한 모델별 정확도와 중앙값을 담는다. `paired_comparison.csv`는 공통 `case_id`만 짝지어 개선·악화·양쪽 성공·양쪽 실패를 표시한다. 기대 정답이 없는 입력은 기록되지만 정확도 계산에서는 제외된다.
 
+분석 CSV를 만든 뒤 발표용 시각화는 다음 명령으로 생성한다.
+
+```bash
+python3 analysis/visualize_simulation_comparison.py \
+  --input-dir analysis/outputs/simulation_comparison \
+  --output-dir analysis/outputs/simulation_comparison/figures
+```
+
+생성되는 파일은 다음과 같다.
+
+- `model_dashboard.png`: 명령·파라미터·종단 간 정확도 비교
+- `case_comparison_matrix.png`: 고정 문항별 성공·안전 거부·실패 상태
+- `failure_distribution.png`: 모델별 실행 결과 구성 비율
+- `pair_outcomes.png`: 동일 문항 기준 개선·악화 건수
+- `latency_comparison.png`: LLM 응답 및 전체 처리시간 분포
+- `representative_cases.csv`: 개선·악화 문항의 자연어 입력과 두 모델 응답
+- `visualization_manifest.json`: 비교 모델과 생성 파일 목록
+
+시각화의 `안전 거부`는 실패가 아니라, 정답 해석 후 런타임 정책에 따라 드론을 움직이지 않은 정상 결과다. 최종 발표 수치는 재시험이 끝난 v0.1과 v0.4의 동일 30문항 로그로 다시 생성한다.
+
 브리지의 단일 명령 제한 때문에 복합 명령이 거부될 수 있다. 그런 문항은 LLM 해석의 정확도와 런타임의 안전한 거부를 따로 읽어야 한다. `result=rejected`를 곧바로 모델 실패로 세지 않는다.

@@ -62,6 +62,18 @@ def score_record(record: dict[str, Any]) -> dict[str, Any]:
         "category": record.get("category"),
         "test_id": record.get("test_id"),
         "natural_language_input": record.get("natural_language_input"),
+        "expected_status": expected_status,
+        "expected_commands": (
+            json.dumps(
+                expected_commands,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            if expected_commands is not None
+            else None
+        ),
+        "expected_runtime": expected_runtime,
+        "llm_raw_response": raw,
         "interpretation_correct": interpretation_correct,
         "command_correct": command_correct,
         "parameter_correct": parameter_correct,
