@@ -102,7 +102,14 @@ def load_test_cases(path: Path) -> dict[str, dict[str, Any]]:
             if not line.strip():
                 continue
             case = json.loads(line)
-            required = {"case_id", "input", "category", "expected_status", "expected_commands", "expected_runtime"}
+            required = {
+                "case_id",
+                "input",
+                "category",
+                "expected_status",
+                "expected_commands",
+                "expected_runtime",
+            }
             if not isinstance(case, dict) or not required.issubset(case):
                 raise ValueError(f"{line_number}행: 평가 문항 필수 항목 누락")
             if case["expected_runtime"] not in {"execute", "reject"}:
