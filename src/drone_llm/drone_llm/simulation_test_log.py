@@ -161,6 +161,7 @@ def is_success_status(status: str) -> bool:
         "긴급 정지 완료",
         "시동 완료",
         "홈 복귀 완료",
+        "경로 역추적 완료",
     )
     return status.startswith(success_prefixes)
 

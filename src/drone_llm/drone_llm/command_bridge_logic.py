@@ -18,6 +18,7 @@ SUPPORTED_RUNTIME_COMMANDS = frozenset(
         "cancel",
         "emergency_stop",
         "return_home",
+        "recall",
     }
 )
 MAX_UNAMBIGUOUS_YAW_DEG = 180.0

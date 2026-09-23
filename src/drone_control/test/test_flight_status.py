@@ -9,6 +9,7 @@ from std_msgs.msg import String
 from drone_control.px4_command_adapter import AdapterState
 from drone_control.px4_command_adapter import Px4CommandAdapter
 from drone_control.px4_command_adapter import TARGET_MODE_TAKEOFF
+from drone_control.recall_runtime import RecallRuntime
 
 
 def make_adapter_stub() -> SimpleNamespace:
@@ -60,6 +61,8 @@ def test_landing_completion_reports_disarm() -> None:
     adapter._mission_target_position = (0.0, 0.0, -2.0)
     adapter._coordinate_calculator = Mock()
     adapter._command_retry_counter = 1
+    adapter._recall_runtime = RecallRuntime()
+    adapter._pending_history_action = None
 
     Px4CommandAdapter._handle_landing(adapter)
 
@@ -85,6 +88,8 @@ def test_runtime_rotation_reports_started() -> None:
         heading=0.0,
     )
     adapter._vehicle_local_position = position
+    adapter._recall_runtime = RecallRuntime()
+    adapter._pending_history_action = None
 
     Px4CommandAdapter.rotate_relative(adapter, 90.0, None)
 

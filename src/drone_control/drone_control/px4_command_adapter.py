@@ -20,12 +20,14 @@ from rclpy.qos import ReliabilityPolicy
 
 from std_msgs.msg import String
 
+from drone_control.action_history import Command
 from drone_control.command_executor import CommandExecutionError
 from drone_control.command_executor import CommandExecutor
-
 from drone_control.coordinate_calculator import CoordinateCalculationError
 from drone_control.coordinate_calculator import CoordinateCalculator
 from drone_control.coordinate_calculator import NedPosition
+from drone_control.recall_runtime import RecallRuntime
+from drone_control.recall_runtime import RecallRuntimeError
 from drone_control.yaw_calculator import (
     YawCalculationError,
     calculate_relative_yaw_target,
@@ -477,6 +479,8 @@ class Px4CommandAdapter(Node):
 
         # 검증된 단일 명령만 실행기에 전달한다.
         self._command_executor = CommandExecutor(self)
+        self._recall_runtime = RecallRuntime()
+        self._pending_history_action: Command | None = None
 
         # LLM 출력 파서와 검증 경계를 통과한 명령을 받는다.
         self._validated_command_subscription = self.create_subscription(
@@ -598,6 +602,10 @@ class Px4CommandAdapter(Node):
                 "Vehicle is not eligible for takeoff"
             )
 
+        # 새 비행에서는 이전 임무의 역추적 기록을 사용하지 않는다.
+        self._recall_runtime.clear_history()
+        self._pending_history_action = None
+
         self._pending_takeoff_altitude_m = altitude_m
         self._takeoff_stability_counter = 0
         self._takeoff_stability_deadline_monotonic = (
@@ -707,6 +715,38 @@ class Px4CommandAdapter(Node):
         self._publish_flight_status(
             "홈 복귀 중: PX4 Return 모드 요청"
         )
+
+    def recall(self) -> None:
+        """완료된 이동·회전 명령을 역순으로 한 단계씩 실행한다."""
+        if self._state is not AdapterState.HOLDING:
+            raise RuntimeError(
+                "Recall command requires the adapter to be holding"
+            )
+
+        if not self._messages_are_fresh():
+            raise RuntimeError(
+                "PX4 position or status message is stale"
+            )
+
+        if not self._is_offboard_and_armed():
+            raise RuntimeError(
+                "Recall command requires an armed Offboard vehicle"
+            )
+
+        try:
+            first_command = self._recall_runtime.start()
+        except RecallRuntimeError as error:
+            raise RuntimeError(str(error)) from error
+
+        total_steps = self._recall_runtime.remaining_count + 1
+        self.get_logger().info(
+            "Recall command accepted. "
+            f"Executing {total_steps} reverse steps."
+        )
+        self._publish_flight_status(
+            f"경로 역추적 시작: 총 {total_steps}단계"
+        )
+        self._execute_recall_step(first_command)
 
     def move_drone(
         self,
@@ -823,6 +863,18 @@ class Px4CommandAdapter(Node):
         self._relative_direction = direction
         self._relative_distance_m = distance_m
         self._target_position = target.as_px4_tuple()
+        if not self._recall_runtime.active:
+            self._pending_history_action = {
+                "name": "move_drone",
+                "arguments": {
+                    "direction": direction,
+                    "distance_m": distance_m,
+                },
+            }
+            if speed_mps is not None:
+                self._pending_history_action["arguments"][
+                    "speed_mps"
+                ] = speed_mps
         self._state = AdapterState.MOVING_TO_TARGET
 
         self.get_logger().info(
@@ -904,6 +956,15 @@ class Px4CommandAdapter(Node):
         self._target_mode = TARGET_MODE_ROTATION
         self._relative_yaw_deg = yaw_deg
         self._target_yaw_rad = target_yaw_rad
+        if not self._recall_runtime.active:
+            self._pending_history_action = {
+                "name": "rotate_relative",
+                "arguments": {"yaw_deg": yaw_deg},
+            }
+            if yaw_speed_dps is not None:
+                self._pending_history_action["arguments"][
+                    "yaw_speed_dps"
+                ] = yaw_speed_dps
         self._state = AdapterState.ROTATING
 
         self.get_logger().info(
@@ -1026,6 +1087,9 @@ class Px4CommandAdapter(Node):
         self._target_position = current_position
         self._target_yaw_rad = current_heading
         self._hover_deadline_monotonic = None
+        if self._recall_runtime.active:
+            self._recall_runtime.abort()
+        self._pending_history_action = None
         self._state = AdapterState.HOLDING
 
         self.get_logger().info(
@@ -1046,6 +1110,8 @@ class Px4CommandAdapter(Node):
         self._mission_target_position = None
         self._coordinate_calculator = None
         self._hover_deadline_monotonic = None
+        self._recall_runtime.abort()
+        self._pending_history_action = None
 
         self._setpoint_stream_counter = 0
         self._command_retry_counter = 0
@@ -1470,6 +1536,8 @@ class Px4CommandAdapter(Node):
 
     def _enter_error(self, message: str) -> None:
         """오류 상태로 전환해 이후 제어 메시지 발행을 막는다."""
+        self._recall_runtime.abort()
+        self._pending_history_action = None
         self._state = AdapterState.ERROR
         self.get_logger().error(message)
         self._publish_flight_status(f"비행 오류: {message}")
@@ -1851,6 +1919,11 @@ class Px4CommandAdapter(Node):
             f"{self._target_mode.capitalize()} target reached. "
             "Holding target position."
         )
+        if self._recall_runtime.active:
+            self._complete_recall_step()
+            return
+
+        self._record_completed_action()
         self._publish_flight_status("목표 위치 도달: 호버링 중")
 
     def _handle_rotation(self) -> None:
@@ -1897,7 +1970,64 @@ class Px4CommandAdapter(Node):
         self.get_logger().info(
             "Rotation target reached. Holding target position and yaw."
         )
+        if self._recall_runtime.active:
+            self._complete_recall_step()
+            return
+
+        self._record_completed_action()
         self._publish_flight_status("회전 완료: 호버링 중")
+
+    def _record_completed_action(self) -> None:
+        """성공한 일반 이동·회전 명령을 Recall 이력에 저장한다."""
+        command = self._pending_history_action
+        self._pending_history_action = None
+        if command is None:
+            return
+        self._recall_runtime.record_completed_action(command)
+        self.get_logger().info(
+            "Action History recorded: "
+            f"name={command['name']}, "
+            f"count={len(self._recall_runtime.get_history())}"
+        )
+
+    def _execute_recall_step(self, command: Command) -> None:
+        """현재 Recall 단계 하나를 기존 명령 실행기로 전달한다."""
+        step_number = len(self._recall_runtime.get_history()) - (
+            self._recall_runtime.remaining_count
+        )
+        self.get_logger().info(
+            "Recall step started: "
+            f"step={step_number}, payload={command}"
+        )
+        self._publish_flight_status(
+            f"경로 역추적 중: {step_number}단계 실행"
+        )
+        try:
+            self._command_executor.execute(command)
+        except (CommandExecutionError, RuntimeError) as error:
+            self._recall_runtime.abort()
+            self._pending_history_action = None
+            self._enter_error(f"Recall step execution failed: {error}")
+
+    def _complete_recall_step(self) -> None:
+        """완료된 Recall 단계 다음 명령을 실행하거나 전체 종료한다."""
+        try:
+            next_command = self._recall_runtime.complete_step()
+        except RecallRuntimeError as error:
+            self._enter_error(f"Recall state error: {error}")
+            return
+
+        if next_command is not None:
+            self._execute_recall_step(next_command)
+            return
+
+        self._pending_history_action = None
+        self.get_logger().info(
+            "Recall completed. Action History was cleared."
+        )
+        self._publish_flight_status(
+            "경로 역추적 완료: 출발 경로 복귀 및 호버링"
+        )
 
     def _handle_hovering(self) -> None:
         """지정된 호버링 시간이 끝나면 명령 대기로 돌아간다."""
@@ -1947,6 +2077,8 @@ class Px4CommandAdapter(Node):
             self._coordinate_calculator = None
             self._hover_deadline_monotonic = None
             self._command_retry_counter = 0
+            self._recall_runtime.clear_history()
+            self._pending_history_action = None
             self._state = AdapterState.LANDED
 
             self.get_logger().info(
@@ -1997,6 +2129,8 @@ class Px4CommandAdapter(Node):
             self._mission_target_position = None
             self._coordinate_calculator = None
             self._command_retry_counter = 0
+            self._recall_runtime.clear_history()
+            self._pending_history_action = None
             self._state = AdapterState.LANDED
 
             self.get_logger().info(

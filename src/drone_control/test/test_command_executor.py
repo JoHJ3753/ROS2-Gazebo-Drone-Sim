@@ -35,6 +35,10 @@ class FakeDroneCommandHandler:
         """홈 복귀 호출을 기록한다."""
         self.calls.append(("return_home",))
 
+    def recall(self) -> None:
+        """경로 역추적 호출을 기록한다."""
+        self.calls.append(("recall",))
+
     def move_drone(
         self,
         direction: str,
@@ -83,6 +87,7 @@ class FakeDroneCommandHandler:
             {"name": "return_home", "arguments": {}},
             ("return_home",),
         ),
+        ({"name": "recall", "arguments": {}}, ("recall",)),
         (
             {
                 "name": "move_drone",
@@ -195,6 +200,7 @@ def test_execute_rejects_invalid_command_structure(command: Any) -> None:
             "name": "return_home",
             "arguments": {"unexpected": 1},
         },
+        {"name": "recall", "arguments": {"unexpected": 1}},
         {
             "name": "emergency_stop",
             "arguments": {"unexpected": 1},

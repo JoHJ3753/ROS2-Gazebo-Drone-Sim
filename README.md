@@ -165,7 +165,8 @@ LLM이 잘못된 문자열, 범위를 벗어난 숫자 또는 지원하지 않�
 | 시뮬레이션 자동 실행 | 완료 | 테스트 월드와 전체 노드 일괄 실행 |
 | 시뮬레이션 테스트 로거 | 완료 | 명령, 좌표, 결과와 실패 원인 JSONL 기록 |
 | 자연어 종단 간 연동 | 시뮬레이션 검증 완료 | 8개 단일 명령의 실제 Gazebo 동작 확인 |
-| `return_home` | 예정 | PX4 Return 모드 기반 구현 검토 |
+| `return_home` | 코드 연결 완료 | PX4 Return 모드와 완료 상태 확인 연결 |
+| `recall` | 코드 연결 완료 | 성공한 이동·회전 이력을 역순으로 순차 실행 |
 | `move_clock_direction` | 예정 | 기존 상대좌표 계산과 이동 로직 재사용 |
 | `take_photo` | 예정 | Gazebo 카메라 촬영 이벤트 연결 |
 | 속도 지정 제어 | 예정 | 이동 및 회전 속도를 PX4 제어에 반영 |
@@ -1211,7 +1212,9 @@ colcon test-result --verbose
 - [x] 시뮬레이션 테스트 결과 JSONL 기록
 - [x] LLM 최초 응답 예열 최적화
 - [ ] 테스트 로거의 신규 완료 상태 판정 보강
-- [ ] PX4 Return 모드 기반 `return_home` 구현
+- [x] PX4 Return 모드 기반 `return_home` 구현
+- [x] 명령 이력 기반 `recall` 순차 실행 연결
+- [ ] `recall` Gazebo 종단 간 검증
 - [ ] `move_clock_direction`을 기존 상대이동 로직과 연결
 - [ ] Gazebo 카메라 기반 `take_photo` 이벤트 연결
 - [ ] `speed_mps`, `yaw_speed_dps` 실제 제어 반영

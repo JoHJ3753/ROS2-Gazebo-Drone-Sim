@@ -94,8 +94,9 @@ def test_case_loader_rejects_duplicate_input(tmp_path) -> None:
         "expected_commands": [{"name": "takeoff", "arguments": {"altitude_m": 2}}],
         "expected_runtime": "execute",
     }
+    duplicate_case = {**case, "case_id": "T02"}
     path.write_text(
-        json.dumps(case) + "\n" + json.dumps({**case, "case_id": "T02"}),
+        json.dumps(case) + "\n" + json.dumps(duplicate_case),
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="중복"):

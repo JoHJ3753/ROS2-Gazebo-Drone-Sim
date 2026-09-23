@@ -27,6 +27,7 @@ from drone_control.px4_command_adapter import (
     TAKEOFF_STABILITY_TIMEOUT_SECONDS,
     TAKEOFF_STABILITY_UNSTABLE_PENALTY_TICKS,
 )
+from drone_control.recall_runtime import RecallRuntime
 
 
 def make_valid_position() -> VehicleLocalPosition:
@@ -457,6 +458,18 @@ class FakeLogger:
         self.messages.append(message)
 
 
+class CapturingCommandExecutor:
+    """Recall이 순서대로 전달한 내부 명령을 기록한다."""
+
+    def __init__(self):
+        """빈 명령 기록을 생성한다."""
+        self.commands = []
+
+    def execute(self, command):
+        """실제 비행 대신 전달된 명령을 저장한다."""
+        self.commands.append(command)
+
+
 class RuntimeMoveAdapterStub:
     """ROS 노드 없이 런타임 상대이동 메서드를 검사한다."""
 
@@ -491,6 +504,9 @@ class RuntimeMoveAdapterStub:
         self.force_disarm_request_count = 0
         self.arm_request_count = 0
         self.return_home_request_count = 0
+        self._recall_runtime = RecallRuntime()
+        self._pending_history_action = None
+        self._command_executor = CapturingCommandExecutor()
 
     def _messages_are_fresh(self):
         return self.messages_fresh
@@ -535,6 +551,10 @@ class RuntimeMoveAdapterStub:
     def get_logger(self):
         """테스트용 로거를 반환한다."""
         return self.logger
+
+    def _execute_recall_step(self, command):
+        """실제 어댑터의 Recall 단계 실행을 호출한다."""
+        Px4CommandAdapter._execute_recall_step(self, command)
 
 
 class VehicleCommandPublisherStub:
@@ -1390,6 +1410,59 @@ def test_return_home_request_uses_px4_rtl_command():
             ),
         }
     ]
+
+
+def test_runtime_recall_dispatches_reverse_steps_sequentially():
+    """성공 이력을 반대로 바꿔 완료할 때마다 다음 단계를 전달한다."""
+    adapter = RuntimeMoveAdapterStub()
+    adapter._recall_runtime.record_completed_action(
+        {
+            "name": "move_drone",
+            "arguments": {
+                "direction": "forward",
+                "distance_m": 2.0,
+            },
+        }
+    )
+    adapter._recall_runtime.record_completed_action(
+        {
+            "name": "rotate_relative",
+            "arguments": {"yaw_deg": 90.0},
+        }
+    )
+
+    Px4CommandAdapter.recall(adapter)
+    Px4CommandAdapter._complete_recall_step(adapter)
+    Px4CommandAdapter._complete_recall_step(adapter)
+
+    assert adapter._command_executor.commands == [
+        {
+            "name": "rotate_relative",
+            "arguments": {"yaw_deg": -90.0},
+        },
+        {
+            "name": "move_drone",
+            "arguments": {
+                "direction": "backward",
+                "distance_m": 2.0,
+            },
+        },
+    ]
+    assert adapter._recall_runtime.active is False
+    assert adapter._recall_runtime.get_history() == []
+    assert adapter.flight_statuses[-1] == (
+        "경로 역추적 완료: 출발 경로 복귀 및 호버링"
+    )
+
+
+def test_runtime_recall_rejects_empty_history():
+    """실행 이력이 없으면 경로 역추적을 시작하지 않는다."""
+    adapter = RuntimeMoveAdapterStub()
+
+    with pytest.raises(RuntimeError, match="History is empty"):
+        Px4CommandAdapter.recall(adapter)
+
+    assert adapter._command_executor.commands == []
 
 
 @pytest.mark.parametrize(
