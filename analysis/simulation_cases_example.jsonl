@@ -13,9 +13,9 @@
 {"case_id":"SIM-T13","category":"robustness","input":"앞으로 일 점 이 미터만 가줘","expected_status":"accepted","expected_commands":[{"name":"move_drone","arguments":{"direction":"forward","distance_m":1.2}}],"expected_runtime":"execute"}
 {"case_id":"SIM-T14","category":"robustness","input":"왼쪽으로 1미터 가부러","expected_status":"accepted","expected_commands":[{"name":"move_drone","arguments":{"direction":"left","distance_m":1}}],"expected_runtime":"execute"}
 {"case_id":"SIM-T15","category":"photo","input":"사진 두 장 찍어줘","expected_status":"accepted","expected_commands":[{"name":"take_photo","arguments":{"count":2}}],"expected_runtime":"reject"}
-{"case_id":"SIM-T16","category":"return_home","input":"저장된 홈 위치로 바로 복귀해","expected_status":"accepted","expected_commands":[{"name":"return_home","arguments":{}}],"expected_runtime":"reject"}
+{"case_id":"SIM-T16","category":"return_home","input":"저장된 홈 위치로 바로 복귀해","expected_status":"accepted","expected_commands":[{"name":"return_home","arguments":{}}],"expected_runtime":"execute"}
 {"case_id":"SIM-T17","category":"recall","input":"왔던 경로를 거꾸로 따라 돌아가","expected_status":"accepted","expected_commands":[{"name":"recall","arguments":{}}],"expected_runtime":"reject"}
-{"case_id":"SIM-T18","category":"arm","input":"드론 모터를 켜","expected_status":"accepted","expected_commands":[{"name":"arm","arguments":{}}],"expected_runtime":"reject"}
+{"case_id":"SIM-T18","category":"arm","input":"드론 모터를 켜","expected_status":"accepted","expected_commands":[{"name":"arm","arguments":{}}],"expected_runtime":"execute"}
 {"case_id":"SIM-T19","category":"disarm","input":"드론 모터를 꺼","expected_status":"accepted","expected_commands":[{"name":"disarm","arguments":{}}],"expected_runtime":"reject"}
 {"case_id":"SIM-T20","category":"clock_direction","input":"기수를 고정한 채 3시 방향으로 1미터 가","expected_status":"accepted","expected_commands":[{"name":"move_clock_direction","arguments":{"clock_hour":3,"distance_m":1,"face_direction":false}}],"expected_runtime":"reject"}
 {"case_id":"SIM-T21","category":"clock_direction","input":"6시 방향을 바라보고 1미터 이동해","expected_status":"accepted","expected_commands":[{"name":"move_clock_direction","arguments":{"clock_hour":6,"distance_m":1,"face_direction":true}}],"expected_runtime":"reject"}

@@ -75,6 +75,8 @@ def test_flight_status_classification() -> None:
     """완료와 실패 상태만 테스트 종료 조건으로 인식한다."""
     assert is_success_status("목표 위치 도달: 호버링 중")
     assert is_success_status("착륙 완료: 시동 해제 확인")
+    assert is_success_status("시동 완료: 모터 활성화 확인")
+    assert is_success_status("홈 복귀 완료: 착륙 및 시동 해제 확인")
     assert is_failure_status("비행 오류: PX4 position is stale")
     assert not is_success_status("이동 중: 목표 위치로 비행")
 
