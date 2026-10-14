@@ -46,6 +46,8 @@ def score_record(record: dict[str, Any]) -> dict[str, Any]:
     runtime_correct = None
     if expected_runtime == "execute":
         runtime_correct = record.get("result") == "success"
+    elif expected_runtime == "interrupt":
+        runtime_correct = record.get("result") == "interrupted"
     elif expected_runtime == "reject":
         runtime_correct = (
             record.get("result") == "rejected"

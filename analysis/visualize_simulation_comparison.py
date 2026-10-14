@@ -181,7 +181,9 @@ def draw_case_matrix(
     from matplotlib.colors import ListedColormap
     from matplotlib.patches import Patch
 
-    case_ids = sorted({row["case_id"] for row in rows if row.get("case_id")})
+    case_ids = list(
+        dict.fromkeys(row["case_id"] for row in rows if row.get("case_id"))
+    )
     index = {(row["model_id"], row["case_id"]): row for row in rows}
     state_index = {state: position for position, state in enumerate(STATE_ORDER)}
     matrix = np.array(

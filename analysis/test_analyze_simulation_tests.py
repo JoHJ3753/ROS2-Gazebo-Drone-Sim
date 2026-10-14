@@ -23,6 +23,27 @@ def test_correct_safe_rejection_is_scored_separately() -> None:
     assert score["end_to_end_correct"] is True
 
 
+def test_expected_interruption_is_runtime_success() -> None:
+    """취소 시험을 위해 의도적으로 중단된 동작을 실패로 세지 않는다."""
+    record = {
+        "model_id": "v0.4",
+        "case_id": "FLIGHT-13",
+        "llm_raw_response": (
+            '{"status":"accepted","commands":['
+            '{"name":"hover","arguments":{"duration_s":60}}]}'
+        ),
+        "expected_status": "accepted",
+        "expected_commands": [
+            {"name": "hover", "arguments": {"duration_s": 60}}
+        ],
+        "expected_runtime": "interrupt",
+        "result": "interrupted",
+    }
+    score = score_record(record)
+    assert score["runtime_correct"] is True
+    assert score["end_to_end_correct"] is True
+
+
 def test_pairwise_comparison_detects_improvement() -> None:
     """같은 문항의 실패에서 성공으로 바뀐 경우만 개선으로 센다."""
     rows = [
